@@ -1,0 +1,34 @@
+{
+  "name": "anti-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anti-Copilot: The Worst Decision Of Your Life — A psychological warfare engine disguised as a developer tool",
+  "workspaces": [
+    "desktop-overlay",
+    "vscode-sensor",
+    "vercel-brain"
+  ],
+  "scripts": {
+    "dev:brain": "npm run dev --workspace=vercel-brain",
+    "dev:overlay": "npm run dev --workspace=desktop-overlay",
+    "build:brain": "npm run build --workspace=vercel-brain",
+    "build:overlay": "npm run build --workspace=desktop-overlay",
+    "build:sensor": "npm run compile --workspace=vscode-sensor",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rayyankah/anti-copilot.git"
+  },
+  "keywords": [
+    "anti-copilot",
+    "hackathon",
+    "vercel",
+    "aws",
+    "dynamodb",
+    "electron",
+    "vscode-extension"
+  ],
+  "author": "rayyankah",
+  "license": "MIT"
+}
