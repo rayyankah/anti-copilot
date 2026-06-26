@@ -4,6 +4,10 @@
   "description": "Silently monitors your coding habits and reports them to the Anti-Copilot engine",
   "version": "0.1.0",
   "publisher": "anti-copilot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rayyankah/anti-copilot.git"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -20,7 +24,17 @@
         "command": "antiCopilot.deactivate",
         "title": "Anti-Copilot: Deactivate Sensor"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Anti-Copilot",
+      "properties": {
+        "antiCopilot.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "The URL of the Anti-Copilot Vercel Brain API server"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

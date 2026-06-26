@@ -29,6 +29,7 @@
   border-color: rgba(255, 100, 0, 0.4);
 }
 
+/* Block Window Styles */
 .action-block_window {
   position: fixed;
   inset: 0;
@@ -36,13 +37,64 @@
   z-index: 9999;
 }
 
+.block-screen-content {
+  text-align: center;
+  color: #ff2d2d;
+  animation: slideIn 0.5s ease-out;
+}
+
+.block-screen-content h1 {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.block-screen-content p {
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+/* Gossip Styles */
+.gossip-container {
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 20px;
+}
+
+.gossip-bubble {
+  background: rgba(40, 40, 40, 0.9);
+  padding: 12px 18px;
+  border-radius: 18px;
+  color: white;
+  max-width: 280px;
+  animation: slideIn 0.3s ease-out;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.gossip-bubble.user1 { align-self: flex-start; background: rgba(0, 100, 255, 0.8); }
+.gossip-bubble.user2 { align-self: flex-start; background: rgba(100, 0, 255, 0.8); }
+.gossip-bubble.user3 { align-self: flex-end; background: rgba(255, 50, 0, 0.8); }
+
+/* Video & Meme */
+.video-card, .meme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 400px;
+}
+
+.meme-image {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.meme-text {
+  font-size: 1.1rem;
+  font-weight: bold;
+  text-align: center;
+}
+
 @keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(10px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }

@@ -1,18 +1,28 @@
 import * as vscode from 'vscode';
 import { WebSocketClient } from '../transport/WebSocketClient';
-import { TriggerType } from '../types';
+import { TriggerType, ActionType } from '../types';
+import { ThemeController } from './ThemeController';
+import { DeveloperIdentity } from '../identity';
 
 export class SensorManager {
   private disposables: vscode.Disposable[] = [];
   private isRunning = false;
   private lastTypingTime = 0;
   private characterCount = 0;
+  private keystrokeTimestamps: number[] = []; // Sliding window for WPM
   private pauseTimer: NodeJS.Timeout | null = null;
+  private codeDebounceTimer: NodeJS.Timeout | null = null;
   private terminalErrors: string[] = [];
   private readonly PAUSE_THRESHOLD_MS = 5000;
   private readonly LARGE_PASTE_THRESHOLD = 50;
+  private readonly CODE_DEBOUNCE_MS = 10000; // Only fire code trigger once per 10 seconds
+  private readonly WPM_WINDOW_MS = 60000; // 60-second sliding window for WPM
 
-  constructor(private wsClient: WebSocketClient) {}
+  constructor(
+    private wsClient: WebSocketClient,
+    private themeController: ThemeController,
+    private identity: DeveloperIdentity
+  ) {}
 
   start(): void {
     if (this.isRunning) return;
@@ -33,11 +43,17 @@ export class SensorManager {
       vscode.languages.onDidChangeDiagnostics((e) => this.onDiagnosticsChange(e))
     );
 
-    // Monitor terminal output
-    this.disposables.push(
-      vscode.window.onDidWriteTerminalData?.((e) => this.onTerminalData(e)) 
-      ?? { dispose: () => {} }
-    );
+    // Monitor terminal output (proposed API, may not exist in all VS Code versions)
+    try {
+      const terminalApi = (vscode.window as any).onDidWriteTerminalData;
+      if (terminalApi) {
+        this.disposables.push(
+          terminalApi((e: any) => this.onTerminalData(e))
+        );
+      }
+    } catch {
+      console.log('[Anti-Copilot Sensor] Terminal monitoring not available.');
+    }
 
     console.log('[Anti-Copilot Sensor] All sensors active.');
   }
@@ -47,6 +63,28 @@ export class SensorManager {
     this.disposables.forEach((d) => d.dispose());
     this.disposables = [];
     if (this.pauseTimer) clearTimeout(this.pauseTimer);
+    if (this.codeDebounceTimer) clearTimeout(this.codeDebounceTimer);
+  }
+
+  private getApiUrl(): string {
+    const config = vscode.workspace.getConfiguration('antiCopilot');
+    return config.get<string>('apiUrl') || 'http://localhost:3000';
+  }
+
+  /**
+   * Calculates Words Per Minute using a sliding window.
+   * Counts characters typed in the last 60 seconds, converts to WPM (avg 5 chars/word).
+   */
+  private calculateWPM(): number {
+    const now = Date.now();
+    const cutoff = now - this.WPM_WINDOW_MS;
+    // Prune old timestamps
+    this.keystrokeTimestamps = this.keystrokeTimestamps.filter(t => t > cutoff);
+    const charsInWindow = this.keystrokeTimestamps.length;
+    // WPM = (chars / 5) / (window_seconds / 60)
+    const windowSeconds = Math.min((now - (this.keystrokeTimestamps[0] || now)) / 1000, 60);
+    if (windowSeconds < 1) return 0;
+    return Math.round((charsInWindow / 5) / (windowSeconds / 60));
   }
 
   private onDocumentChange(event: vscode.TextDocumentChangeEvent): void {
@@ -64,19 +102,28 @@ export class SensorManager {
     }
 
     // Track typing for WPM calculation
-    this.characterCount += event.contentChanges.reduce(
-      (sum, c) => sum + c.text.length, 0
-    );
+    const charsTyped = event.contentChanges.reduce((sum, c) => sum + c.text.length, 0);
+    this.characterCount += charsTyped;
+    for (let i = 0; i < charsTyped; i++) {
+      this.keystrokeTimestamps.push(now);
+    }
     this.lastTypingTime = now;
 
     // Reset pause timer
     this.resetPauseTimer();
 
-    // Emit typing trigger periodically
-    this.emitTrigger(TriggerType.Code, {
-      characterCount: this.characterCount,
-      timestamp: now,
-    });
+    // Debounced code trigger — only fire once per CODE_DEBOUNCE_MS
+    if (!this.codeDebounceTimer) {
+      this.codeDebounceTimer = setTimeout(() => {
+        this.codeDebounceTimer = null;
+        const wpm = this.calculateWPM();
+        this.emitTrigger(TriggerType.Code, {
+          characterCount: this.characterCount,
+          wpm,
+          timestamp: Date.now(),
+        });
+      }, this.CODE_DEBOUNCE_MS);
+    }
   }
 
   private onEditorChange(editor: vscode.TextEditor | undefined): void {
@@ -108,7 +155,7 @@ export class SensorManager {
     }
   }
 
-  private onTerminalData(event: vscode.TerminalDataWriteEvent): void {
+  private onTerminalData(event: { terminal: vscode.Terminal; data: string }): void {
     const data = event.data;
     
     // Detect error patterns in terminal output
@@ -165,11 +212,44 @@ export class SensorManager {
     }, this.PAUSE_THRESHOLD_MS);
   }
 
-  private emitTrigger(type: TriggerType, metadata: Record<string, unknown>): void {
-    this.wsClient.send({
+  private async emitTrigger(type: TriggerType, metadata: Record<string, unknown>): Promise<void> {
+    const apiUrl = this.getApiUrl();
+    const payload = {
+      userId: this.identity.uuid,
+      username: this.identity.username,
       trigger: type,
       timestamp: Date.now(),
       metadata,
-    });
+    };
+
+    try {
+      // Send telemetry to Vercel Brain
+      const response = await fetch(`${apiUrl}/api/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API returned status ${response.status}`);
+      }
+
+      const actionResponse = await response.json() as { action: ActionType, content: string, mediaUrl?: string, duration?: number };
+      console.log('[Anti-Copilot Sensor] Received Action:', actionResponse.action);
+
+      // Handle specific IDE actions directly, or forward visual actions to overlay
+      if (actionResponse.action === ActionType.ForceLightMode) {
+        await this.themeController.forceLightMode();
+        // Forward to overlay to show text as well
+        this.wsClient.send({ ...actionResponse, type: 'action' });
+      } else {
+        // Forward visual action to overlay
+        this.wsClient.send({ ...actionResponse, type: 'action' });
+      }
+
+    } catch (err) {
+      console.error('[Anti-Copilot Sensor] Failed to communicate with Vercel Brain:', err);
+    }
   }
 }
+
