@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 
 interface TriggerPayload {
   type: string;
@@ -19,30 +19,53 @@ declare global {
 export default function App() {
   const [currentAction, setCurrentAction] = useState<TriggerPayload | null>(null);
   const [visible, setVisible] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    console.log('[Anti-Copilot Renderer] App mounted, registering trigger listener...');
+
     if (window.antiCopilot) {
       window.antiCopilot.onTrigger((trigger) => {
+        console.log('[Anti-Copilot Renderer] Trigger received:', trigger);
+
+        // Clear any existing hide timer
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+        }
+
         setCurrentAction(trigger);
         setVisible(true);
 
-        // TTS for text content
-        if (trigger.content && (trigger.action === 'mock' || trigger.action === 'demotivate' || trigger.action === 'send_meme')) {
-          const utterance = new SpeechSynthesisUtterance(trigger.content);
-          utterance.rate = 0.9;
-          utterance.pitch = 0.8;
-          window.speechSynthesis.speak(utterance);
+        // TTS for text content (exclude visual-only actions)
+        if (trigger.content && !['block_window', 'force_light_mode', 'play_video'].includes(trigger.action)) {
+          try {
+            window.speechSynthesis.cancel(); // Cancel any ongoing speech
+            const utterance = new SpeechSynthesisUtterance(trigger.content);
+            utterance.rate = 0.9;
+            utterance.pitch = 0.8;
+            window.speechSynthesis.speak(utterance);
+            console.log('[Anti-Copilot Renderer] TTS speaking:', trigger.content);
+          } catch (e) {
+            console.error('[Anti-Copilot Renderer] TTS error:', e);
+          }
         }
 
-        // Auto-hide after some time
-        const duration = trigger.action === 'play_video' ? 15000 : trigger.action === 'block_window' ? 8000 : 5000;
-        setTimeout(() => setVisible(false), duration);
+        // Auto-hide after duration
+        const duration = trigger.action === 'play_video' ? 15000 : trigger.action === 'block_window' ? 8000 : 6000;
+        hideTimerRef.current = setTimeout(() => setVisible(false), duration);
       });
+      console.log('[Anti-Copilot Renderer] Trigger listener registered successfully.');
+    } else {
+      console.error('[Anti-Copilot Renderer] window.antiCopilot is NOT available! Preload may have failed.');
     }
   }, []);
 
   if (!visible || !currentAction) {
-    return null;
+    return (
+      <div className="overlay-container idle-state">
+        <div className="idle-indicator">💀</div>
+      </div>
+    );
   }
 
   // Handle specific action rendering
@@ -97,10 +120,14 @@ export default function App() {
     );
   }
 
-  // Default (mock, demotivate, create_window)
+  // Default (mock, demotivate, force_light_mode, etc.)
   return (
     <div className="overlay-container">
       <div className={`overlay-card action-${currentAction.action}`}>
+        <div className="overlay-header">
+          <span className="overlay-icon">💀</span>
+          <span className="overlay-title">Anti-Copilot</span>
+        </div>
         <p className="overlay-text">
           {currentAction.content || '💀 Anti-Copilot is watching...'}
         </p>

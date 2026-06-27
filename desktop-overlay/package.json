@@ -4,7 +4,7 @@
   "description": "Transparent frameless overlay that stalks your cursor and demotivates you",
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "tsc -p tsconfig.main.json && concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build && tsc -p tsconfig.main.json",
     "start": "electron .",
     "lint": "eslint src/"

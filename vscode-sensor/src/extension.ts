@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const identity = getOrCreateIdentity(context);
   console.log(`[Anti-Copilot Sensor] Developer Identity: ${identity.username} (${identity.uuid})`);
 
-  wsClient = new WebSocketClient('ws://localhost:9001');
+  wsClient = new WebSocketClient('ws://localhost:9009');
   themeController = new ThemeController();
   sensorManager = new SensorManager(wsClient, themeController, identity);
 
