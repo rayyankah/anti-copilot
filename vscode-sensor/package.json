@@ -11,8 +11,12 @@
   "engines": {
     "vscode": "^1.100.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -32,14 +36,19 @@
           "type": "string",
           "default": "http://localhost:3000",
           "description": "The URL of the Anti-Copilot Vercel Brain API server"
+        },
+        "antiCopilot.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Anti-Copilot project root (for auto-launching the overlay app)"
         }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
     "lint": "eslint src/",
     "package": "vsce package"
   },
@@ -47,11 +56,12 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.100.0",
     "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
     "@types/ws": "^8.18.0",
-    "typescript": "^5.8.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.1",
     "eslint": "^9.0.0",
-    "@vscode/vsce": "^3.0.0"
+    "typescript": "^5.8.0"
   }
 }

@@ -1,194 +1,467 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* ═══════════════════════════════════════════
+   RESET & ROOT
+   ═══════════════════════════════════════════ */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
-html, body, #root {
-  width: 100%;
-  height: 100%;
-  background: transparent;
+html, body, #root { 
+  width: 100vw; 
+  height: 100vh; 
+  background: transparent; 
+  color: white; 
+  font-family: 'Courier New', Courier, monospace; 
   overflow: hidden;
 }
 
-/* ── Idle State ── */
-.idle-state {
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 20px;
+.fullscreen-canvas {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.floating-ui-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transition: transform 0.08s ease-out;
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════
+   FULLSCREEN CANVAS — All states render here
+   ═══════════════════════════════════════════ */
+.fullscreen-canvas {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none; /* Let clicks pass through to VS Code */
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding: 0;
+  transition: opacity 0.3s ease;
+}
+
+.fullscreen-canvas.exiting {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+/* ═══════════════════════════════════════════
+   IDLE STATE
+   ═══════════════════════════════════════════ */
+.state-idle {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 4px;
 }
 
 .idle-indicator {
-  font-size: 28px;
-  opacity: 0.4;
-  animation: pulse 3s ease-in-out infinite;
-}
-
-/* ── Main Container ── */
-.overlay-container {
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  width: 100%;
-  height: 100%;
-  padding: 16px;
-}
-
-/* ── Notification Card ── */
-.overlay-card {
-  background: rgba(15, 15, 20, 0.92);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 60, 60, 0.25);
-  border-radius: 14px;
-  padding: 16px 20px;
-  color: #fff;
-  font-size: 15px;
-  line-height: 1.5;
-  text-align: left;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
-  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  max-width: 380px;
-  width: 100%;
-}
-
-.overlay-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.overlay-icon {
-  font-size: 18px;
-}
-
-.overlay-title {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  color: #ff4444;
-}
-
-.overlay-text {
-  font-size: 15px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-/* ── Action Variants ── */
-.action-mock {
-  border-left: 3px solid #ff6b00;
-}
-
-.action-demotivate {
-  border-left: 3px solid #ff2d2d;
-}
-
-.action-force_light_mode {
-  border-left: 3px solid #ffcc00;
-}
-
-/* ── Block Window (Fullscreen) ── */
-.action-block_window {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.96);
-  z-index: 9999;
   align-items: center;
   justify-content: center;
 }
 
-.block-screen-content {
-  text-align: center;
-  color: #ff2d2d;
-  animation: blockPulse 0.6s ease-out;
+.idle-skull {
+  font-size: 28px;
+  opacity: 0.35;
+  animation: skull-breathe 3.5s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px rgba(255, 50, 50, 0.2));
 }
 
-.block-screen-content h1 {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-  text-shadow: 0 0 40px rgba(255, 0, 0, 0.5);
+.idle-pulse-ring {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 60, 60, 0.15);
+  animation: pulse-ring 3.5s ease-in-out infinite;
 }
 
-.block-screen-content p {
-  font-size: 1.4rem;
-  color: rgba(255, 255, 255, 0.85);
-  max-width: 600px;
+@keyframes skull-breathe {
+  0%, 100% { opacity: 0.25; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.08); }
 }
 
-/* ── Gossip Bubbles ── */
-.gossip-container {
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-end;
-  padding: 16px;
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1); opacity: 0.3; }
+  50% { transform: scale(1.4); opacity: 0; }
 }
 
-.gossip-bubble {
-  padding: 10px 16px;
-  border-radius: 16px;
-  color: white;
-  max-width: 280px;
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.gossip-bubble.user1 {
-  align-self: flex-start;
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  border-bottom-left-radius: 4px;
-  animation: slideUp 0.3s ease-out;
-}
-
-.gossip-bubble.user2 {
-  align-self: flex-start;
-  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-  border-bottom-left-radius: 4px;
-  animation: slideUp 0.3s ease-out 0.15s both;
-}
-
-.gossip-bubble.user3 {
-  align-self: flex-end;
-  background: linear-gradient(135deg, #ef4444, #dc2626);
-  border-bottom-right-radius: 4px;
-  animation: slideUp 0.3s ease-out 0.3s both;
-}
-
-/* ── Video & Meme ── */
-.video-card, .meme-card {
+/* ═══════════════════════════════════════════
+   CHATBOX CONTAINER — Unified bubble system
+   ═══════════════════════════════════════════ */
+.chatbox-container {
+  position: relative;
+  width: 340px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 400px;
+  pointer-events: none;
+  animation: canvas-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.chatbox-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(10, 10, 14, 0.92);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 60, 60, 0.2);
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+}
+
+.chatbox-icon {
+  font-size: 14px;
+}
+
+.chatbox-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: #ff4444;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  flex: 1;
+}
+
+.chatbox-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #4ade80;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: status-blink 1.5s ease-in-out infinite;
+}
+
+@keyframes status-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ─── Message Area ─── */
+.chatbox-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(10, 10, 14, 0.88);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 60, 60, 0.15);
+  border-top: none;
+  border-radius: 0 0 14px 14px;
+}
+
+/* ─── Chat Bubbles ─── */
+.chat-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  animation: bubble-pop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle shimmer pass on new bubbles */
+.chat-bubble::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.04),
+    transparent
+  );
+  animation: shimmer 1.2s ease-out 0.4s both;
+}
+
+@keyframes shimmer {
+  to { left: 100%; }
+}
+
+/* Sender: Dev_Alpha */
+.sender-alpha {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(37, 99, 235, 0.12));
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-left: 3px solid #3b82f6;
+}
+
+/* Sender: Dev_Beta */
+.sender-beta {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(124, 58, 237, 0.12));
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-left: 3px solid #8b5cf6;
+}
+
+/* Sender: Senior_Hater — the main roaster */
+.sender-senior {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(185, 28, 28, 0.12));
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-left: 3px solid #ef4444;
+}
+
+/* Sender: Anti-Copilot (solo mode) */
+.sender-hater {
+  background: linear-gradient(135deg, rgba(255, 60, 60, 0.15), rgba(200, 30, 30, 0.1));
+  border: 1px solid rgba(255, 60, 60, 0.25);
+  border-left: 3px solid #ff4444;
+}
+
+.sender-tag {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.6;
+}
+
+.sender-alpha .sender-tag { color: #60a5fa; }
+.sender-beta .sender-tag { color: #a78bfa; }
+.sender-senior .sender-tag { color: #f87171; }
+.sender-hater .sender-tag { color: #ff6b6b; }
+
+.bubble-text {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.45;
+}
+
+/* ─── Action Variant Borders (on chatbox container) ─── */
+.state-mock .chatbox-container { }
+.state-demotivate .chatbox-header { border-color: rgba(255, 45, 45, 0.35); }
+.state-force_light_mode .chatbox-header { border-color: rgba(255, 204, 0, 0.35); }
+.state-force_light_mode .chatbox-title { color: #ffcc00; }
+
+/* ═══════════════════════════════════════════
+   MEME CARD
+   ═══════════════════════════════════════════ */
+.meme-card {
+  padding: 10px;
+  background: rgba(10, 10, 14, 0.88);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 60, 60, 0.15);
+  border-top: none;
+  border-radius: 0 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .meme-image {
   width: 100%;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: meme-drop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.meme-text {
-  font-size: 1.1rem;
-  font-weight: bold;
+@keyframes meme-drop {
+  from { opacity: 0; transform: scale(0.92) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.meme-caption {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
   text-align: center;
+  padding: 4px 8px;
 }
 
-/* ── Animations ── */
-@keyframes slideUp {
+/* ═══════════════════════════════════════════
+   VIDEO PLAYER OVERLAY
+   ═══════════════════════════════════════════ */
+.video-player-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  pointer-events: auto; /* Trap clicks during video */
+  animation: fade-in 0.5s ease both;
+  z-index: 100;
+}
+
+.video-chrome {
+  width: 480px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 60, 60, 0.3);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 0 60px rgba(255, 50, 50, 0.08);
+  animation: video-appear 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.video-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(10, 10, 14, 0.95);
+}
+
+.video-iframe {
+  width: 100%;
+  height: 270px;
+  border: none;
+  display: block;
+}
+
+@keyframes video-appear {
+  from { opacity: 0; transform: scale(0.9) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ═══════════════════════════════════════════
+   BRUTAL BLOCKER — Full Screen Punishment
+   ═══════════════════════════════════════════ */
+.brutal-blocker {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(25, 5, 5, 0.98), rgba(5, 0, 0, 0.99));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto; /* Trap ALL mouse interactions */
+  z-index: 9999;
+  animation: fade-in 0.3s ease both;
+}
+
+.blocker-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  animation: blocker-slam 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.blocker-icon-ring {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 40, 40, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ring-pulse 2s ease-in-out infinite;
+  box-shadow: 0 0 40px rgba(255, 0, 0, 0.15);
+}
+
+.blocker-icon {
+  font-size: 42px;
+  filter: drop-shadow(0 0 12px rgba(255, 0, 0, 0.5));
+}
+
+.blocker-title {
+  font-size: 2.8rem;
+  font-weight: 700;
+  color: #ff2d2d;
+  letter-spacing: 6px;
+  text-shadow: 0 0 40px rgba(255, 0, 0, 0.4);
+  font-family: 'Inter', sans-serif;
+}
+
+.blocker-divider {
+  width: 200px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 60, 60, 0.4), transparent);
+}
+
+.blocker-message {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  line-height: 1.7;
+  max-width: 500px;
+  font-weight: 400;
+}
+
+/* Timer bar that drains during block duration */
+.blocker-timer-bar {
+  width: 240px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.blocker-timer-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff2d2d, #ff6b00);
+  border-radius: 2px;
+  animation: timer-drain 8s linear both;
+  transform-origin: left;
+}
+
+@keyframes timer-drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+/* CRT scanlines effect */
+.blocker-scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.06) 2px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  pointer-events: none;
+}
+
+@keyframes blocker-slam {
+  0% { opacity: 0; transform: scale(0.85) translateY(-20px); }
+  60% { transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes ring-pulse {
+  0%, 100% { box-shadow: 0 0 40px rgba(255, 0, 0, 0.15); border-color: rgba(255, 40, 40, 0.4); }
+  50% { box-shadow: 0 0 60px rgba(255, 0, 0, 0.25); border-color: rgba(255, 40, 40, 0.6); }
+}
+
+/* ═══════════════════════════════════════════
+   SHARED ANIMATIONS
+   ═══════════════════════════════════════════ */
+@keyframes canvas-enter {
   from {
     opacity: 0;
-    transform: translateY(20px) scale(0.96);
+    transform: translateY(16px) scale(0.97);
   }
   to {
     opacity: 1;
@@ -196,13 +469,18 @@ html, body, #root {
   }
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(1.1); }
+@keyframes bubble-pop {
+  0% {
+    transform: scale(0.8) translateY(10px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
 }
 
-@keyframes blockPulse {
-  0% { opacity: 0; transform: scale(0.8); }
-  50% { transform: scale(1.05); }
-  100% { opacity: 1; transform: scale(1); }
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }

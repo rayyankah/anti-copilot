@@ -13,16 +13,24 @@ export class SensorManager {
   private pauseTimer: NodeJS.Timeout | null = null;
   private codeDebounceTimer: NodeJS.Timeout | null = null;
   private terminalErrors: string[] = [];
-  private readonly PAUSE_THRESHOLD_MS = 5000;
+  private lastTriggerTime = 0;
+  private readonly PAUSE_THRESHOLD_MS = 10000;
   private readonly LARGE_PASTE_THRESHOLD = 50;
-  private readonly CODE_DEBOUNCE_MS = 10000; // Only fire code trigger once per 10 seconds
-  private readonly WPM_WINDOW_MS = 60000; // 60-second sliding window for WPM
+  private readonly CODE_DEBOUNCE_MS = 15000; // Only fire code trigger once per 15 seconds
+  private readonly GLOBAL_COOLDOWN_MS = 15000; // Prevent any trigger from firing if another fired recently
+  private readonly WPM_WINDOW_MS = 5000; // 60-second sliding window for WPM
+  private statusBarItem: vscode.StatusBarItem;
 
   constructor(
     private wsClient: WebSocketClient,
     private themeController: ThemeController,
     private identity: DeveloperIdentity
-  ) {}
+  ) {
+    this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.statusBarItem.text = '$(eye) Anti-Copilot: Ready';
+    this.statusBarItem.tooltip = 'Anti-Copilot is monitoring your work';
+    this.statusBarItem.show();
+  }
 
   start(): void {
     if (this.isRunning) return;
@@ -56,6 +64,7 @@ export class SensorManager {
     }
 
     console.log('[Anti-Copilot Sensor] All sensors active.');
+    this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
   }
 
   stop(): void {
@@ -64,11 +73,13 @@ export class SensorManager {
     this.disposables = [];
     if (this.pauseTimer) clearTimeout(this.pauseTimer);
     if (this.codeDebounceTimer) clearTimeout(this.codeDebounceTimer);
+    this.statusBarItem.hide();
   }
 
   private getApiUrl(): string {
     const config = vscode.workspace.getConfiguration('antiCopilot');
-    return config.get<string>('apiUrl') || 'http://localhost:3000';
+    const url = config.get<string>('apiUrl') || 'http://127.0.0.1:3000';
+    return url.replace('localhost', '127.0.0.1');
   }
 
   /**
@@ -87,9 +98,26 @@ export class SensorManager {
     return Math.round((charsInWindow / 5) / (windowSeconds / 60));
   }
 
+  private typingBuffer = '';
+
   private onDocumentChange(event: vscode.TextDocumentChangeEvent): void {
     const now = Date.now();
     
+    // Accumulate typed characters for the test trigger
+    const newText = event.contentChanges.map(c => c.text).join('');
+    if (newText) {
+      this.typingBuffer = (this.typingBuffer + newText).slice(-10);
+      if (this.typingBuffer.toLowerCase().endsWith('white')) {
+        // Bypass cooldown to guarantee test executes immediately
+        this.lastTriggerTime = 0;
+        this.emitTrigger(TriggerType.TripleError, {
+          testTrigger: 'User explicitly typed "white"'
+        });
+        this.typingBuffer = ''; // reset buffer
+        return;
+      }
+    }
+
     for (const change of event.contentChanges) {
       // Detect large paste
       if (change.text.length > this.LARGE_PASTE_THRESHOLD && change.rangeLength === 0) {
@@ -112,16 +140,31 @@ export class SensorManager {
     // Reset pause timer
     this.resetPauseTimer();
 
-    // Debounced code trigger — only fire once per CODE_DEBOUNCE_MS
+    // Check for immediate Focus trigger if typing fast
+    const wpm = this.calculateWPM();
+    if (wpm >= 40) {
+      // emitTrigger handles the global cooldown (15s) so it won't spam
+      this.emitTrigger(TriggerType.Focus, {
+        characterCount: this.characterCount,
+        wpm,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Debounced code trigger — only fire once per CODE_DEBOUNCE_MS (for normal typing)
     if (!this.codeDebounceTimer) {
       this.codeDebounceTimer = setTimeout(() => {
         this.codeDebounceTimer = null;
-        const wpm = this.calculateWPM();
-        this.emitTrigger(TriggerType.Code, {
-          characterCount: this.characterCount,
-          wpm,
-          timestamp: Date.now(),
-        });
+        
+        // Recalculate WPM for the normal code trigger
+        const currentWpm = this.calculateWPM();
+        if (currentWpm < 40) {
+          this.emitTrigger(TriggerType.Code, {
+            characterCount: this.characterCount,
+            wpm: currentWpm,
+            timestamp: Date.now(),
+          });
+        }
       }, this.CODE_DEBOUNCE_MS);
     }
   }
@@ -213,42 +256,93 @@ export class SensorManager {
   }
 
   private async emitTrigger(type: TriggerType, metadata: Record<string, unknown>): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastTriggerTime < this.GLOBAL_COOLDOWN_MS) {
+      console.log(`[Anti-Copilot Sensor] Skipping trigger ${type} due to cooldown.`);
+      return;
+    }
+    
+    this.lastTriggerTime = now;
     const apiUrl = this.getApiUrl();
     const payload = {
       userId: this.identity.uuid,
       username: this.identity.username,
       trigger: type,
-      timestamp: Date.now(),
+      timestamp: now,
       metadata,
     };
 
     try {
+      this.statusBarItem.text = '$(sync~spin) Anti-Copilot: Analyzing...';
+      
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Request -> POST /api/action [${type}]` });
+
       // Send telemetry to Vercel Brain
       const response = await fetch(`${apiUrl}/api/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       
       if (!response.ok) {
+        this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Request Failed: HTTP ${response.status}` });
         throw new Error(`API returned status ${response.status}`);
       }
 
       const actionResponse = await response.json() as { action: ActionType, content: string, mediaUrl?: string, duration?: number };
+      
+      this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Response <- [${actionResponse.action}]` });
       console.log('[Anti-Copilot Sensor] Received Action:', actionResponse.action);
+      this.statusBarItem.text = `$(zap) Anti-Copilot: ${actionResponse.action}`;
 
       // Handle specific IDE actions directly, or forward visual actions to overlay
       if (actionResponse.action === ActionType.ForceLightMode) {
         await this.themeController.forceLightMode();
         // Forward to overlay to show text as well
         this.wsClient.send({ ...actionResponse, type: 'action' });
+      } else if (actionResponse.action === ActionType.FlashLightMode) {
+        this.wsClient.send({ ...actionResponse, type: 'action' });
+        
+        let isLight = false;
+        const flashInterval = setInterval(async () => {
+          if (isLight) {
+            await this.themeController.restoreTheme();
+            isLight = false;
+          } else {
+            await this.themeController.forceLightMode();
+            isLight = true;
+          }
+        }, 150); // Fast strobe flash (150ms)
+
+        setTimeout(async () => {
+          clearInterval(flashInterval);
+          await this.themeController.restoreTheme();
+        }, 5000); // Stop after 5 seconds
       } else {
         // Forward visual action to overlay
         this.wsClient.send({ ...actionResponse, type: 'action' });
       }
 
+      // Reset status bar after a few seconds
+      setTimeout(() => {
+        if (this.isRunning) {
+          this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
+        }
+      }, 3000);
+
     } catch (err) {
       console.error('[Anti-Copilot Sensor] Failed to communicate with Vercel Brain:', err);
+      this.statusBarItem.text = '$(error) Anti-Copilot: Error';
+      setTimeout(() => {
+        if (this.isRunning) {
+          this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
+        }
+      }, 3000);
     }
   }
 }

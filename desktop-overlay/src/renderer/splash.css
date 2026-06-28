@@ -1,0 +1,207 @@
+/* ═══════════════════════════════════════════
+   SPLASH SCREEN — Anti-Copilot Boot Sequence
+   ═══════════════════════════════════════════ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: 'Press Start 2P', monospace;
+  -webkit-font-smoothing: none; /* Keep the pixel crunch */
+  user-select: none;
+  -webkit-app-region: drag; /* Allow dragging the splash window */
+}
+
+/* ─── Flash Layer ─── */
+#flash-layer {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  animation: flash-burst 1.2s ease-out 0.3s both;
+}
+
+@keyframes flash-burst {
+  0% { opacity: 1; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ─── Main Content ─── */
+#splash-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 10;
+  opacity: 0;
+  animation: content-fade-in 0.8s ease-out 1.0s both;
+}
+
+@keyframes content-fade-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ─── PAIN Text ─── */
+#pain-text {
+  font-size: 72px;
+  color: #ff2d2d;
+  letter-spacing: 24px;
+  text-shadow:
+    0 0 20px rgba(255, 45, 45, 0.6),
+    0 0 60px rgba(255, 45, 45, 0.3),
+    0 0 120px rgba(255, 45, 45, 0.15);
+  animation:
+    glitch-text 3s ease-in-out infinite 1.5s,
+    pain-pulse 2s ease-in-out infinite 1.5s;
+  position: relative;
+}
+
+/* Glitch effect — offset copies */
+#pain-text::before,
+#pain-text::after {
+  content: 'PAIN';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#pain-text::before {
+  color: #0ff;
+  animation: glitch-shift-1 3s ease-in-out infinite 1.5s;
+  clip-path: inset(0 0 65% 0);
+  opacity: 0.7;
+}
+
+#pain-text::after {
+  color: #f0f;
+  animation: glitch-shift-2 3s ease-in-out infinite 1.5s;
+  clip-path: inset(65% 0 0 0);
+  opacity: 0.7;
+}
+
+@keyframes glitch-text {
+  0%, 92%, 100% { transform: translate(0); }
+  93% { transform: translate(-4px, 2px); }
+  94% { transform: translate(4px, -2px); }
+  95% { transform: translate(-2px, -1px); }
+  96% { transform: translate(2px, 1px); }
+}
+
+@keyframes glitch-shift-1 {
+  0%, 92%, 100% { transform: translate(0); }
+  93% { transform: translate(6px, -3px); }
+  95% { transform: translate(-3px, 2px); }
+  96% { transform: translate(0); }
+}
+
+@keyframes glitch-shift-2 {
+  0%, 92%, 100% { transform: translate(0); }
+  93% { transform: translate(-6px, 3px); }
+  95% { transform: translate(3px, -2px); }
+  96% { transform: translate(0); }
+}
+
+@keyframes pain-pulse {
+  0%, 100% {
+    text-shadow:
+      0 0 20px rgba(255, 45, 45, 0.6),
+      0 0 60px rgba(255, 45, 45, 0.3),
+      0 0 120px rgba(255, 45, 45, 0.15);
+  }
+  50% {
+    text-shadow:
+      0 0 30px rgba(255, 45, 45, 0.8),
+      0 0 80px rgba(255, 45, 45, 0.4),
+      0 0 160px rgba(255, 45, 45, 0.2);
+  }
+}
+
+/* ─── Subtitle ─── */
+#pain-subtitle {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  letter-spacing: 12px;
+  animation: subtitle-in 0.6s ease-out 1.8s both;
+}
+
+@keyframes subtitle-in {
+  from { opacity: 0; transform: translateY(10px); letter-spacing: 20px; }
+  to { opacity: 1; transform: translateY(0); letter-spacing: 12px; }
+}
+
+/* ─── CRT Scanlines ─── */
+#scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+  animation: scanline-flicker 0.1s linear infinite;
+}
+
+@keyframes scanline-flicker {
+  0% { opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { opacity: 0.8; }
+}
+
+/* ─── Status Bar ─── */
+#status-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 20;
+  opacity: 0;
+  animation: status-in 0.5s ease-out 2.2s both;
+}
+
+#status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: dot-blink 1.2s ease-in-out infinite;
+}
+
+#status-text {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 2px;
+}
+
+@keyframes status-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes dot-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}

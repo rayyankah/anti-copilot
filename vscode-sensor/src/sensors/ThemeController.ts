@@ -9,7 +9,11 @@ export class ThemeController {
    */
   async forceLightMode(): Promise<void> {
     const config = vscode.workspace.getConfiguration('workbench');
-    this.originalTheme = config.get<string>('colorTheme');
+    const currentTheme = config.get<string>('colorTheme');
+    
+    if (currentTheme !== 'Default Light Modern') {
+      this.originalTheme = currentTheme;
+    }
 
     await config.update(
       'colorTheme',

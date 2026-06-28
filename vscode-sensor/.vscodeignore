@@ -1,6 +1,8 @@
-.vscode/**
-node_modules/**
-src/**
-*.ts
-!dist/**
-.gitignore
+.vscode-test/
+.env
+desktop-overlay/
+vercel-brain/
+node_modules/
+.git/
+*.vsix
+src/

@@ -6,6 +6,7 @@ export enum TriggerType {
   LargePaste = 'large_paste',
   TripleError = 'triple_error',
   DirtyCommit = 'dirty_commit',
+  Focus = 'focus',
 }
 
 export interface TriggerPayload {
@@ -23,4 +24,5 @@ export enum ActionType {
   CreateWindow = 'create_window',
   BlockWindow = 'block_window',
   ForceLightMode = 'force_light_mode',
+  FlashLightMode = 'flash_light_mode',
 }

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anti-Copilot — Debug Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./debug.css" />
+  </head>
+  <body>
+    <!-- Title bar -->
+    <div id="title-bar">
+      <span id="title-icon">🔍</span>
+      <span id="title-text">ANTI-COPILOT DEBUG MONITOR</span>
+      <div id="title-controls">
+        <button id="btn-auto-scroll" class="control-btn active" title="Auto-scroll">⬇ AUTO</button>
+        <button id="btn-clear" class="control-btn" title="Clear logs">🗑 CLEAR</button>
+      </div>
+    </div>
+
+    <!-- Log container -->
+    <div id="log-container">
+      <table id="log-table">
+        <thead>
+          <tr>
+            <th class="col-time">TIME</th>
+            <th class="col-source">SOURCE</th>
+            <th class="col-level">LEVEL</th>
+            <th class="col-message">MESSAGE</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Stats bar -->
+    <div id="stats-bar">
+      <span id="stats-count">0 entries</span>
+      <span id="stats-uptime">Uptime: 0s</span>
+    </div>
+
+    <script type="module" src="./debug.js"></script>
+  </body>
+</html>

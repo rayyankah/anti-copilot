@@ -8,6 +8,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { userId, username, trigger, metadata, timestamp } = body;
 
+    // Emit debug event for Electron Launcher
+    console.log(JSON.stringify({ type: 'debug', source: 'brain', message: `Incoming API Request: [${trigger}] from ${username}` }));
+
     // Log telemetry to DynamoDB first
     try {
       await dynamoDb.send(
@@ -48,8 +51,7 @@ export async function POST(request: NextRequest) {
     // Prepare Bedrock prompt
     const prompt = `You are a comedy writer for "Anti-Copilot", a FUNNY and VOLUNTARY developer tool that roasts programmers with lighthearted jokes when they make mistakes. Think of it like a stand-up comedian doing a developer roast — the humor should be sharp but playful, never actually mean-spirited. The developer has voluntarily installed this for entertainment.
 
-The developer (their chosen comedy stage name is "${username || 'the developer'}") just triggered: "${trigger}".
-This developer has made ${historicalErrorCount} total mistakes so far. Use this count to make the roast funnier (e.g. "mistake #${historicalErrorCount}" or "your ${historicalErrorCount}th error today").
+The developer just triggered: "${trigger}".
 Context: ${JSON.stringify(metadata || {})}
 
 Write a SHORT, FUNNY one-liner roast (max 2 sentences). Pick the most appropriate comedy style:
@@ -67,6 +69,21 @@ Respond ONLY with valid JSON:
 }`;
 
     let actionResponse = { action: 'mock', content: 'I am watching you fail.' };
+
+    if (trigger === 'focus') {
+      const powerRangerQuotes = [
+        "It's morphin' time! Light attack activated!",
+        "Megazord sequence engaged! Flashbang deployed!",
+        "Go Go Power Coder! Initiating hyper light mode!",
+        "Ranger danger! Unleashing the fury of a thousand suns!"
+      ];
+      const quote = powerRangerQuotes[Math.floor(Math.random() * powerRangerQuotes.length)];
+      
+      return NextResponse.json({
+        action: 'flash_light_mode',
+        content: quote,
+      });
+    }
 
     try {
       const command = new InvokeModelCommand({
