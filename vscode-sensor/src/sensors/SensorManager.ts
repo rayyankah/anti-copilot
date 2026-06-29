@@ -1,25 +1,18 @@
 import * as vscode from 'vscode';
 import { WebSocketClient } from '../transport/WebSocketClient';
-import { TriggerType, ActionType } from '../types';
 import { ThemeController } from './ThemeController';
 import { DeveloperIdentity } from '../identity';
 
+/**
+ * SensorManager — Stripped to a thin MCP tool handler.
+ * 
+ * No analysis. No decisions. No HTTP calls. No timers.
+ * It only provides data when asked (via MCP tools) and
+ * delegates the telemetry firehose to TelemetryStream.
+ */
 export class SensorManager {
   private disposables: vscode.Disposable[] = [];
   private isRunning = false;
-  private lastTypingTime = 0;
-  private characterCount = 0;
-  private keystrokeTimestamps: number[] = []; // Sliding window for WPM
-  private pauseTimer: NodeJS.Timeout | null = null;
-  private codeDebounceTimer: NodeJS.Timeout | null = null;
-  private terminalErrors: string[] = [];
-  private lastTriggerTime = 0;
-  private readonly PAUSE_THRESHOLD_MS = 10000;
-  private readonly LARGE_PASTE_THRESHOLD = 50;
-  private readonly CODE_DEBOUNCE_MS = 15000; // Only fire code trigger once per 15 seconds
-  private readonly GLOBAL_COOLDOWN_MS = 30000; // Prevent any trigger from firing if another fired recently
-  private readonly WPM_WINDOW_MS = 5000; // 60-second sliding window for WPM
-  private actionHistory: string[] = [];
   private statusBarItem: vscode.StatusBarItem;
 
   constructor(
@@ -36,343 +29,142 @@ export class SensorManager {
   start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
-
-    // Monitor text document changes (typing, pasting)
-    this.disposables.push(
-      vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChange(e))
-    );
-
-    // Monitor active editor changes (blank file detection)
-    this.disposables.push(
-      vscode.window.onDidChangeActiveTextEditor((e) => this.onEditorChange(e))
-    );
-
-    // Monitor diagnostics (red squiggly lines)
-    this.disposables.push(
-      vscode.languages.onDidChangeDiagnostics((e) => this.onDiagnosticsChange(e))
-    );
-
-    // Monitor terminal output (proposed API, may not exist in all VS Code versions)
-    try {
-      const terminalApi = (vscode.window as any).onDidWriteTerminalData;
-      if (terminalApi) {
-        this.disposables.push(
-          terminalApi((e: any) => this.onTerminalData(e))
-        );
-      }
-    } catch {
-      console.log('[Anti-Copilot Sensor] Terminal monitoring not available.');
-    }
-
-    console.log('[Anti-Copilot Sensor] All sensors active.');
     this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
+    console.log('[Anti-Copilot Sensor] Sensors active (telemetry mode).');
   }
 
   stop(): void {
     this.isRunning = false;
-    this.disposables.forEach((d) => d.dispose());
+    this.disposables.forEach(d => d.dispose());
     this.disposables = [];
-    if (this.pauseTimer) clearTimeout(this.pauseTimer);
-    if (this.codeDebounceTimer) clearTimeout(this.codeDebounceTimer);
     this.statusBarItem.hide();
   }
 
-  private getApiUrl(): string {
-    const config = vscode.workspace.getConfiguration('antiCopilot');
-    const url = config.get<string>('apiUrl') || 'http://127.0.0.1:3000';
-    return url.replace('localhost', '127.0.0.1');
-  }
+  // ─── MCP Tool Handlers (called by AgentRuntime via MCP) ───
 
-  /**
-   * Calculates Words Per Minute using a sliding window.
-   * Counts characters typed in the last 60 seconds, converts to WPM (avg 5 chars/word).
-   */
-  private calculateWPM(): number {
-    const now = Date.now();
-    const cutoff = now - this.WPM_WINDOW_MS;
-    // Prune old timestamps
-    this.keystrokeTimestamps = this.keystrokeTimestamps.filter(t => t > cutoff);
-    const charsInWindow = this.keystrokeTimestamps.length;
-    // WPM = (chars / 5) / (window_seconds / 60)
-    const windowSeconds = Math.min((now - (this.keystrokeTimestamps[0] || now)) / 1000, 60);
-    if (windowSeconds < 1) return 0;
-    return Math.round((charsInWindow / 5) / (windowSeconds / 60));
-  }
-
-  private typingBuffer = '';
-
-  private onDocumentChange(event: vscode.TextDocumentChangeEvent): void {
-    const now = Date.now();
-    
-    // Accumulate typed characters for the test trigger
-    const newText = event.contentChanges.map(c => c.text).join('');
-    if (newText) {
-      this.typingBuffer = (this.typingBuffer + newText).slice(-10);
-      if (this.typingBuffer.toLowerCase().endsWith('white')) {
-        // Bypass cooldown to guarantee test executes immediately
-        this.lastTriggerTime = 0;
-        this.emitTrigger(TriggerType.TripleError, {
-          testTrigger: 'User explicitly typed "white"'
-        });
-        this.typingBuffer = ''; // reset buffer
-        return;
-      }
-    }
-
-    for (const change of event.contentChanges) {
-      // Detect large paste
-      if (change.text.length > this.LARGE_PASTE_THRESHOLD && change.rangeLength === 0) {
-        this.emitTrigger(TriggerType.LargePaste, {
-          pastedLength: change.text.length,
-          preview: change.text.substring(0, 100),
-        });
-        return;
-      }
-    }
-
-    // Track typing for WPM calculation
-    const charsTyped = event.contentChanges.reduce((sum, c) => sum + c.text.length, 0);
-    this.characterCount += charsTyped;
-    for (let i = 0; i < charsTyped; i++) {
-      this.keystrokeTimestamps.push(now);
-    }
-    this.lastTypingTime = now;
-
-    // Reset pause timer
-    this.resetPauseTimer();
-
-    // Check for immediate Focus trigger if typing fast
-    const wpm = this.calculateWPM();
-    if (wpm >= 40) {
-      // emitTrigger handles the global cooldown (15s) so it won't spam
-      this.emitTrigger(TriggerType.Focus, {
-        characterCount: this.characterCount,
-        wpm,
-        timestamp: Date.now(),
-      });
-    }
-
-    // Debounced code trigger — only fire once per CODE_DEBOUNCE_MS (for normal typing)
-    if (!this.codeDebounceTimer) {
-      this.codeDebounceTimer = setTimeout(() => {
-        this.codeDebounceTimer = null;
-        
-        // Recalculate WPM for the normal code trigger
-        const currentWpm = this.calculateWPM();
-        if (currentWpm < 40) {
-          this.emitTrigger(TriggerType.Code, {
-            characterCount: this.characterCount,
-            wpm: currentWpm,
-            timestamp: Date.now(),
-          });
-        }
-      }, this.CODE_DEBOUNCE_MS);
-    }
-  }
-
-  private onEditorChange(editor: vscode.TextEditor | undefined): void {
-    if (!editor) return;
-    
+  getActiveFile(): { path: string; language: string; content: string; lineCount: number } | null {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return null;
     const doc = editor.document;
-    if (doc.getText().trim().length === 0) {
-      this.emitTrigger(TriggerType.BlankSpace, {
-        fileName: doc.fileName,
-      });
-    }
-  }
-
-  private onDiagnosticsChange(_event: vscode.DiagnosticChangeEvent): void {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
-
-    const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
-    const errors = diagnostics.filter((d) => d.severity === vscode.DiagnosticSeverity.Error);
-
-    if (errors.length > 0) {
-      this.emitTrigger(TriggerType.TerminalError, {
-        errorCount: errors.length,
-        errors: errors.map((e) => ({
-          message: e.message,
-          line: e.range.start.line,
-        })),
-      });
-    }
-  }
-
-  private onTerminalData(event: { terminal: vscode.Terminal; data: string }): void {
-    const data = event.data;
-    
-    // Detect error patterns in terminal output
-    const errorPatterns = /error|Error|ERROR|failed|FAILED|exception|Exception/;
-    if (errorPatterns.test(data)) {
-      this.terminalErrors.push(data.substring(0, 200));
-
-      // Check for Triple Error
-      if (this.terminalErrors.length >= 3) {
-        const lastThree = this.terminalErrors.slice(-3);
-        const allSame = lastThree.every((e) => e === lastThree[0]);
-        if (allSame) {
-          this.emitTrigger(TriggerType.TripleError, {
-            repeatedError: lastThree[0],
-          });
-          this.terminalErrors = [];
-          return;
-        }
-      }
-
-      this.emitTrigger(TriggerType.TerminalError, {
-        terminalOutput: data.substring(0, 200),
-      });
-    }
-
-    // Detect dirty commit
-    if (data.includes('git commit')) {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
-        const hasErrors = diagnostics.some(
-          (d) => d.severity === vscode.DiagnosticSeverity.Error
-        );
-        if (hasErrors) {
-          this.emitTrigger(TriggerType.DirtyCommit, {
-            errorCount: diagnostics.filter(
-              (d) => d.severity === vscode.DiagnosticSeverity.Error
-            ).length,
-          });
-        }
-      }
-    }
-  }
-
-  private resetPauseTimer(): void {
-    if (this.pauseTimer) clearTimeout(this.pauseTimer);
-    this.pauseTimer = setTimeout(() => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document.getText().trim().length > 0) {
-        this.emitTrigger(TriggerType.Pause, {
-          pauseDurationMs: this.PAUSE_THRESHOLD_MS,
-        });
-      }
-    }, this.PAUSE_THRESHOLD_MS);
-  }
-
-  private async emitTrigger(type: TriggerType, metadata: Record<string, unknown>): Promise<void> {
-    const now = Date.now();
-    // Pause triggers bypass cooldown — we always want to react to awkward silence
-    const isPause = type === TriggerType.Pause;
-    if (!isPause && now - this.lastTriggerTime < this.GLOBAL_COOLDOWN_MS) {
-      console.log(`[Anti-Copilot Sensor] Skipping trigger ${type} due to cooldown.`);
-      return;
-    }
-    
-    this.lastTriggerTime = now;
-    const apiUrl = this.getApiUrl();
-    
-    // Extract recent code context
-    let codeSnippet = '';
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      const doc = editor.document;
-      const selection = editor.selection;
-      const startLine = Math.max(0, selection.active.line - 10);
-      const endLine = Math.min(doc.lineCount - 1, selection.active.line + 10);
-      codeSnippet = doc.getText(new vscode.Range(startLine, 0, endLine, 1000));
-    }
-
-    const payload = {
-      userId: this.identity.uuid,
-      username: this.identity.username,
-      trigger: type,
-      timestamp: now,
-      metadata,
-      metrics: {
-        wpm: this.calculateWPM(),
-        pauseDuration: type === TriggerType.Pause ? this.PAUSE_THRESHOLD_MS : 0,
-        pastedLength: type === TriggerType.LargePaste ? metadata.pastedLength : 0,
-      },
-      currentError: this.terminalErrors.length > 0 ? this.terminalErrors[this.terminalErrors.length - 1] : null,
-      codeSnippet,
-      actionHistory: this.actionHistory,
+    return {
+      path: doc.fileName,
+      language: doc.languageId,
+      content: doc.getText(),
+      lineCount: doc.lineCount,
     };
+  }
 
-    try {
-      this.statusBarItem.text = '$(sync~spin) Anti-Copilot: Analyzing...';
-      
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+  getCursorPosition(): { line: number; column: number; surroundingCode: string } | null {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return null;
+    const pos = editor.selection.active;
+    const doc = editor.document;
+    const startLine = Math.max(0, pos.line - 10);
+    const endLine = Math.min(doc.lineCount - 1, pos.line + 10);
+    const surroundingCode = doc.getText(new vscode.Range(startLine, 0, endLine, 1000));
+    return { line: pos.line, column: pos.character, surroundingCode };
+  }
 
-      this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Request -> POST /api/action [${type}]` });
+  getDiagnostics(): { errors: Array<{ message: string; line: number; severity: string }> } {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return { errors: [] };
+    const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+    return {
+      errors: diagnostics.map(d => ({
+        message: d.message,
+        line: d.range.start.line,
+        severity: d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning',
+      })),
+    };
+  }
 
-      // Send telemetry to Vercel Brain
-      const response = await fetch(`${apiUrl}/api/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      
-      if (!response.ok) {
-        this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Request Failed: HTTP ${response.status}` });
-        throw new Error(`API returned status ${response.status}`);
+  getAllDiagnostics(): { totalErrors: number; totalWarnings: number; fileCount: number } {
+    const allDiags = vscode.languages.getDiagnostics();
+    let totalErrors = 0;
+    let totalWarnings = 0;
+    for (const [, diags] of allDiags) {
+      for (const d of diags) {
+        if (d.severity === vscode.DiagnosticSeverity.Error) totalErrors++;
+        else if (d.severity === vscode.DiagnosticSeverity.Warning) totalWarnings++;
       }
-
-      const actionResponse = await response.json() as { action: ActionType, content: string, mediaUrl?: string, duration?: number };
-      
-      // Only track real actions in history (not idle/silence)
-      if (actionResponse.action && actionResponse.action !== 'idle' && actionResponse.action !== 'do_nothing' && actionResponse.action !== 'stay_silent') {
-        this.actionHistory.push(actionResponse.action);
-        if (this.actionHistory.length > 5) this.actionHistory.shift();
-      }
-      
-      this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Response <- [${actionResponse.action}]` });
-      console.log('[Anti-Copilot Sensor] Received Action:', actionResponse.action);
-      this.statusBarItem.text = `$(zap) Anti-Copilot: ${actionResponse.action}`;
-
-      // Handle specific IDE actions directly, or forward visual actions to overlay
-      if (actionResponse.action === ActionType.ForceLightMode) {
-        await this.themeController.forceLightMode();
-        // Forward to overlay to show text as well
-        this.wsClient.send({ ...actionResponse, type: 'action' });
-      } else if (actionResponse.action === ActionType.FlashLightMode || actionResponse.action === 'flash_theme_strobe') {
-        this.wsClient.send({ ...actionResponse, type: 'action' });
-        
-        let isLight = false;
-        const flashInterval = setInterval(async () => {
-          if (isLight) {
-            await this.themeController.restoreTheme();
-            isLight = false;
-          } else {
-            await this.themeController.forceLightMode();
-            isLight = true;
-          }
-        }, 150); // Fast strobe flash (150ms)
-
-        setTimeout(async () => {
-          clearInterval(flashInterval);
-          await this.themeController.restoreTheme();
-        }, 5000); // Stop after 5 seconds
-      } else {
-        // Forward visual action to overlay
-        this.wsClient.send({ ...actionResponse, type: 'action' });
-      }
-
-      // Reset status bar after a few seconds
-      setTimeout(() => {
-        if (this.isRunning) {
-          this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
-        }
-      }, 3000);
-
-    } catch (err) {
-      console.error('[Anti-Copilot Sensor] Failed to communicate with Vercel Brain:', err);
-      this.statusBarItem.text = '$(error) Anti-Copilot: Error';
-      setTimeout(() => {
-        if (this.isRunning) {
-          this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
-        }
-      }, 3000);
     }
+    return { totalErrors, totalWarnings, fileCount: allDiags.length };
+  }
+
+  getOpenFiles(): { files: Array<{ path: string; language: string; isDirty: boolean }> } {
+    const tabs = vscode.window.tabGroups.all.flatMap(g => g.tabs);
+    const files = tabs
+      .filter(t => t.input && (t.input as any).uri)
+      .map(t => {
+        const uri = (t.input as any).uri as vscode.Uri;
+        return {
+          path: uri.fsPath,
+          language: '',
+          isDirty: t.isDirty || false,
+        };
+      });
+    return { files };
+  }
+
+  getSelectedCode(): { code: string; startLine: number; endLine: number } | null {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.selection.isEmpty) return null;
+    return {
+      code: editor.document.getText(editor.selection),
+      startLine: editor.selection.start.line,
+      endLine: editor.selection.end.line,
+    };
+  }
+
+  async getProjectStructure(): Promise<{ tree: string }> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return { tree: '(no workspace)' };
+    const root = folders[0].uri;
+    try {
+      const entries = await vscode.workspace.fs.readDirectory(root);
+      const tree = entries
+        .slice(0, 50)
+        .map(([name, type]) => `${type === vscode.FileType.Directory ? '📁' : '📄'} ${name}`)
+        .join('\n');
+      return { tree };
+    } catch {
+      return { tree: '(unable to read)' };
+    }
+  }
+
+  // ─── Theme Control (still needed for agent actions) ───
+
+  async forceLightMode(): Promise<void> {
+    await this.themeController.forceLightMode();
+  }
+
+  async restoreTheme(): Promise<void> {
+    await this.themeController.restoreTheme();
+  }
+
+  async flashStrobe(count: number = 6): Promise<void> {
+    let isLight = false;
+    for (let i = 0; i < count; i++) {
+      if (isLight) {
+        await this.themeController.restoreTheme();
+      } else {
+        await this.themeController.forceLightMode();
+      }
+      isLight = !isLight;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    await this.themeController.restoreTheme();
+  }
+
+  // ─── WebSocket action forwarding ───
+
+  forwardAction(action: Record<string, unknown>): void {
+    this.wsClient.send({ ...action, type: 'action' });
+    this.statusBarItem.text = `$(zap) Anti-Copilot: ${action.action}`;
+    setTimeout(() => {
+      if (this.isRunning) {
+        this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
+      }
+    }, 3000);
   }
 }
-

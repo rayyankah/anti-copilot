@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('antiCopilot', {
+  // ─── Existing ───
   onTrigger: (callback: (trigger: unknown) => void) => {
     ipcRenderer.on('trigger', (_event, data) => callback(data));
   },
@@ -9,5 +10,13 @@ contextBridge.exposeInMainWorld('antiCopilot', {
   },
   setClickThrough: (enabled: boolean) => {
     ipcRenderer.send('set-click-through', enabled);
+  },
+
+  // ─── New Agent Channels ───
+  onRobotStateUpdate: (callback: (state: any) => void) => {
+    ipcRenderer.on('robot-state', (_event, state) => callback(state));
+  },
+  onAgentAction: (callback: (action: any) => void) => {
+    ipcRenderer.on('agent-action', (_event, action) => callback(action));
   },
 });

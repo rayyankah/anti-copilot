@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* ═══════════════════════════════════════════
+   RETRO WIN95 / MS-DOS THEME
+   Anti-Copilot Overlay
+   ═══════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap');
 
 /* ═══════════════════════════════════════════
    RESET & ROOT
@@ -9,54 +14,67 @@
   box-sizing: border-box;
 }
 
-html, body, #root { 
-  width: 100vw; 
-  height: 100vh; 
-  background: transparent; 
-  color: white; 
-  font-family: 'Courier New', Courier, monospace; 
+html, body, #root {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  color: #00ff00;
+  font-family: 'VT323', 'Courier New', 'Fixedsys', monospace;
   overflow: hidden;
+  image-rendering: pixelated;
+}
+
+/* CRT scanline overlay on the whole page */
+#root::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+  pointer-events: none;
+  z-index: 99999;
 }
 
 .fullscreen-canvas {
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
   pointer-events: none;
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding: 0;
+  transition: opacity 0.15s linear;
+}
+
+.fullscreen-canvas.exiting {
+  opacity: 0;
+  transition: opacity 0.2s linear;
 }
 
 .floating-ui-container {
   position: absolute;
   top: 0;
   left: 0;
-  transition: transform 0.08s ease-out;
+  transition: transform 0.06s linear;
   will-change: transform;
   pointer-events: none;
 }
 
 /* ═══════════════════════════════════════════
-   FULLSCREEN CANVAS — All states render here
+   WIN95 BEVEL HELPER BORDERS
+   outset = raised (title bar, buttons)
+   inset  = sunken (text fields, content area)
    ═══════════════════════════════════════════ */
-.fullscreen-canvas {
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  overflow: hidden;
-  pointer-events: none; /* Let clicks pass through to VS Code */
-  display: flex;
-  justify-content: flex-start;
-  align-items: flex-start;
-  padding: 0;
-  transition: opacity 0.3s ease;
-}
-
-.fullscreen-canvas.exiting {
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.35s ease, transform 0.35s ease;
-}
 
 /* ═══════════════════════════════════════════
-   IDLE STATE
+   IDLE STATE — Retro Robot Avatar
    ═══════════════════════════════════════════ */
 .state-idle {
   align-items: flex-start;
@@ -73,229 +91,227 @@ html, body, #root {
 
 .idle-skull {
   font-size: 28px;
-  opacity: 0.35;
-  animation: skull-breathe 3.5s ease-in-out infinite;
-  filter: drop-shadow(0 0 8px rgba(255, 50, 50, 0.2));
+  opacity: 0.6;
+  animation: crt-blink 2s steps(2, end) infinite;
+  filter: drop-shadow(0 0 4px rgba(0, 255, 0, 0.5));
 }
 
 .idle-pulse-ring {
   position: absolute;
   width: 48px;
   height: 48px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 60, 60, 0.15);
-  animation: pulse-ring 3.5s ease-in-out infinite;
+  border: 2px solid rgba(0, 255, 0, 0.3);
+  animation: pulse-ring 3s steps(8, end) infinite;
 }
 
-@keyframes skull-breathe {
-  0%, 100% { opacity: 0.25; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.08); }
+@keyframes crt-blink {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
 }
 
 @keyframes pulse-ring {
   0%, 100% { transform: scale(1); opacity: 0.3; }
-  50% { transform: scale(1.4); opacity: 0; }
+  50% { transform: scale(1.3); opacity: 0; }
 }
 
 /* ═══════════════════════════════════════════
-   CHATBOX CONTAINER — Unified bubble system
+   WIN95 CHATBOX — Main Window Container
    ═══════════════════════════════════════════ */
 .chatbox-container {
   position: relative;
-  width: 340px;
+  width: 380px;
   display: flex;
   flex-direction: column;
   pointer-events: none;
-  animation: canvas-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: win95-open 0.15s steps(3, end) both;
+  /* Win95 outer shadow */
+  box-shadow:
+    2px 2px 0 0 #000,
+    -1px -1px 0 0 #fff;
 }
 
+/* Title Bar — Win95 style */
 .chatbox-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: rgba(10, 10, 14, 0.92);
-  backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 60, 60, 0.2);
+  gap: 6px;
+  padding: 3px 4px;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  border-top: 2px solid #dfdfdf;
+  border-left: 2px solid #dfdfdf;
+  border-right: 2px solid #404040;
   border-bottom: none;
-  border-radius: 14px 14px 0 0;
 }
 
 .chatbox-icon {
   font-size: 14px;
+  filter: drop-shadow(1px 1px 0 #000);
 }
 
 .chatbox-title {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 1.8px;
-  color: #ff4444;
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  letter-spacing: 0px;
+  color: #ffffff;
+  font-family: 'VT323', 'MS Sans Serif', 'Tahoma', sans-serif;
   flex: 1;
+  text-shadow: 1px 1px 0 #000;
 }
 
 .chatbox-status {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: #4ade80;
-  font-family: 'JetBrains Mono', monospace;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0px;
+  color: #00ff00;
+  font-family: 'VT323', monospace;
+  text-shadow: 0 0 6px rgba(0, 255, 0, 0.6);
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #4ade80;
-  animation: status-blink 1.5s ease-in-out infinite;
+  width: 8px;
+  height: 8px;
+  background: #00ff00;
+  border: 1px solid #008000;
+  animation: status-blink 1s steps(2, end) infinite;
 }
 
 @keyframes status-blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  50% { opacity: 0.2; }
 }
 
-/* ─── Message Area ─── */
+/* ─── Win95 Message Area (sunken panel) ─── */
 .chatbox-messages {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  background: rgba(10, 10, 14, 0.88);
-  backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 60, 60, 0.15);
-  border-top: none;
-  border-radius: 0 0 14px 14px;
+  gap: 4px;
+  padding: 8px;
+  background: #c0c0c0;
+  border-top: 2px solid #808080;
+  border-left: 2px solid #808080;
+  border-right: 2px solid #dfdfdf;
+  border-bottom: 2px solid #dfdfdf;
 }
 
-/* ─── Chat Bubbles ─── */
+/* ─── Chat Bubbles — DOS Terminal style ─── */
 .chat-bubble {
-  padding: 10px 14px;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-  animation: bubble-pop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  padding: 6px 10px;
+  border: 2px solid;
+  box-shadow: 2px 2px 0 #000;
+  animation: bubble-pop 0.1s steps(2, end) both;
   position: relative;
   overflow: hidden;
+  font-family: 'VT323', 'Courier New', monospace;
 }
 
-/* Subtle shimmer pass on new bubbles */
-.chat-bubble::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.04),
-    transparent
-  );
-  animation: shimmer 1.2s ease-out 0.4s both;
-}
+/* Remove shimmer — not retro */
+.chat-bubble::after { display: none; }
 
-@keyframes shimmer {
-  to { left: 100%; }
-}
-
-/* Sender: Dev_Alpha */
+/* Sender: Dev_Alpha — Blue DOS terminal */
 .sender-alpha {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(37, 99, 235, 0.12));
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  border-left: 3px solid #3b82f6;
+  background: #000080;
+  border-color: #0000ff;
+  color: #ffffff;
 }
 
-/* Sender: Dev_Beta */
+/* Sender: Dev_Beta — Purple terminal */
 .sender-beta {
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(124, 58, 237, 0.12));
-  border: 1px solid rgba(139, 92, 246, 0.25);
-  border-left: 3px solid #8b5cf6;
+  background: #400040;
+  border-color: #800080;
+  color: #ff00ff;
 }
 
-/* Sender: Senior_Hater — the main roaster */
+/* Sender: Senior_Hater — Red alert terminal */
 .sender-senior {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(185, 28, 28, 0.12));
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-left: 3px solid #ef4444;
+  background: #400000;
+  border-color: #ff0000;
+  color: #ff4444;
 }
 
-/* Sender: Anti-Copilot (solo mode) */
+/* Sender: Anti-Copilot (solo mode) — Green terminal */
 .sender-hater {
-  background: linear-gradient(135deg, rgba(255, 60, 60, 0.15), rgba(200, 30, 30, 0.1));
-  border: 1px solid rgba(255, 60, 60, 0.25);
-  border-left: 3px solid #ff4444;
+  background: #001a00;
+  border-color: #00ff00;
+  color: #00ff00;
+}
+
+/* Sender: The Prodigy — Hot pink DOS */
+.sender-prodigy {
+  background: #1a001a;
+  border-color: #ff00ff;
+  color: #ff00ff;
 }
 
 .sender-tag {
   display: block;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  opacity: 0.6;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+  font-family: 'VT323', monospace;
+  opacity: 0.8;
 }
 
-.sender-alpha .sender-tag { color: #60a5fa; }
-.sender-beta .sender-tag { color: #a78bfa; }
-.sender-senior .sender-tag { color: #f87171; }
-.sender-hater .sender-tag { color: #ff6b6b; }
+.sender-alpha .sender-tag { color: #5555ff; }
+.sender-beta .sender-tag { color: #ff55ff; }
+.sender-senior .sender-tag { color: #ff5555; }
+.sender-hater .sender-tag { color: #55ff55; }
 
 .bubble-text {
   margin: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
-  line-height: 1.45;
+  font-size: 16px;
+  font-weight: 400;
+  color: inherit;
+  line-height: 1.3;
+  font-family: 'VT323', 'Courier New', monospace;
 }
 
-/* ─── Action Variant Borders (on chatbox container) ─── */
+/* ─── Action Variant Borders ─── */
 .state-mock .chatbox-container { }
-.state-demotivate .chatbox-header { border-color: rgba(255, 45, 45, 0.35); }
-.state-force_light_mode .chatbox-header { border-color: rgba(255, 204, 0, 0.35); }
-.state-force_light_mode .chatbox-title { color: #ffcc00; }
+.state-demotivate .chatbox-header { background: linear-gradient(90deg, #800000, #cc0000); }
+.state-force_light_mode .chatbox-header { background: linear-gradient(90deg, #808000, #cccc00); }
+.state-force_light_mode .chatbox-title { color: #ffff00; }
 
 /* ═══════════════════════════════════════════
-   MEME CARD
+   MEME CARD — Win95 Picture Viewer
    ═══════════════════════════════════════════ */
 .meme-card {
-  padding: 10px;
-  background: rgba(10, 10, 14, 0.88);
-  backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 60, 60, 0.15);
-  border-top: none;
-  border-radius: 0 0 14px 14px;
+  padding: 8px;
+  background: #c0c0c0;
+  border-top: 2px solid #808080;
+  border-left: 2px solid #808080;
+  border-right: 2px solid #dfdfdf;
+  border-bottom: 2px solid #dfdfdf;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .meme-image {
   width: 100%;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  animation: meme-drop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  border: 2px inset #808080;
+  animation: meme-drop 0.2s steps(3, end) both;
 }
 
 @keyframes meme-drop {
-  from { opacity: 0; transform: scale(0.92) translateY(10px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .meme-caption {
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
+  font-size: 15px;
+  font-weight: 700;
+  color: #000000;
   text-align: center;
   padding: 4px 8px;
+  font-family: 'VT323', monospace;
 }
 
 /* ═══════════════════════════════════════════
-   VIDEO PLAYER OVERLAY
+   VIDEO PLAYER — Win95 Media Player
    ═══════════════════════════════════════════ */
 .video-player-overlay {
   position: fixed;
@@ -303,115 +319,116 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  pointer-events: auto; /* Trap clicks during video */
-  animation: fade-in 0.5s ease both;
+  flex-direction: column;
+  background: rgba(0, 0, 128, 0.6);
+  pointer-events: auto;
+  animation: fade-in 0.15s steps(3, end) both;
   z-index: 100;
 }
 
 .video-chrome {
-  width: 480px;
-  border-radius: 16px;
+  width: 500px;
   overflow: hidden;
-  border: 1px solid rgba(255, 60, 60, 0.3);
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-    0 0 60px rgba(255, 50, 50, 0.08);
-  animation: video-appear 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  border-top: 2px solid #dfdfdf;
+  border-left: 2px solid #dfdfdf;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  box-shadow: 3px 3px 0 #000;
+  animation: video-appear 0.2s steps(3, end) both;
+  background: #c0c0c0;
 }
 
 .video-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: rgba(10, 10, 14, 0.95);
+  gap: 6px;
+  padding: 3px 4px;
+  background: linear-gradient(90deg, #000080, #1084d0);
 }
 
 .video-iframe {
   width: 100%;
-  height: 270px;
+  height: 300px;
   border: none;
   display: block;
+  border: 3px inset #808080;
 }
 
 @keyframes video-appear {
-  from { opacity: 0; transform: scale(0.9) translateY(20px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* ═══════════════════════════════════════════
-   BRUTAL BLOCKER — Full Screen Punishment
+   BRUTAL BLOCKER — BSOD Style
    ═══════════════════════════════════════════ */
 .brutal-blocker {
   position: fixed;
   inset: 0;
-  background: radial-gradient(ellipse at center, rgba(25, 5, 5, 0.98), rgba(5, 0, 0, 0.99));
+  background: #000080;
   display: flex;
   align-items: center;
   justify-content: center;
-  pointer-events: auto; /* Trap ALL mouse interactions */
+  pointer-events: auto;
   z-index: 9999;
-  animation: fade-in 0.3s ease both;
+  animation: fade-in 0.1s steps(2, end) both;
 }
 
 .blocker-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
-  animation: blocker-slam 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  gap: 16px;
+  animation: blocker-slam 0.2s steps(3, end) both;
+  max-width: 600px;
+  text-align: center;
 }
 
 .blocker-icon-ring {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 40, 40, 0.4);
+  width: 80px;
+  height: 80px;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: ring-pulse 2s ease-in-out infinite;
-  box-shadow: 0 0 40px rgba(255, 0, 0, 0.15);
 }
 
 .blocker-icon {
-  font-size: 42px;
-  filter: drop-shadow(0 0 12px rgba(255, 0, 0, 0.5));
+  font-size: 48px;
 }
 
 .blocker-title {
-  font-size: 2.8rem;
+  font-size: 24px;
   font-weight: 700;
-  color: #ff2d2d;
-  letter-spacing: 6px;
-  text-shadow: 0 0 40px rgba(255, 0, 0, 0.4);
-  font-family: 'Inter', sans-serif;
+  color: #ffffff;
+  letter-spacing: 4px;
+  font-family: 'VT323', 'Courier New', monospace;
+  background: #c0c0c0;
+  color: #000080;
+  padding: 2px 12px;
 }
 
 .blocker-divider {
-  width: 200px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 60, 60, 0.4), transparent);
+  width: 400px;
+  height: 2px;
+  background: #ffffff;
 }
 
 .blocker-message {
-  font-size: 1rem;
-  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  color: #ffffff;
   text-align: center;
-  line-height: 1.7;
+  line-height: 1.6;
   max-width: 500px;
   font-weight: 400;
+  font-family: 'VT323', 'Courier New', monospace;
 }
 
-/* Timer bar that drains during block duration */
+/* Timer bar — DOS loading style */
 .blocker-timer-bar {
-  width: 240px;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
+  width: 300px;
+  height: 16px;
+  background: #000000;
+  border: 2px inset #808080;
   overflow: hidden;
   margin-top: 8px;
 }
@@ -419,8 +436,13 @@ html, body, #root {
 .blocker-timer-fill {
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, #ff2d2d, #ff6b00);
-  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    #00ff00 0px,
+    #00ff00 10px,
+    #008000 10px,
+    #008000 12px
+  );
   animation: timer-drain 8s linear both;
   transform-origin: left;
 }
@@ -430,7 +452,7 @@ html, body, #root {
   to { transform: scaleX(0); }
 }
 
-/* CRT scanlines effect */
+/* CRT scanlines on blocker */
 .blocker-scanlines {
   position: absolute;
   inset: 0;
@@ -438,44 +460,49 @@ html, body, #root {
     0deg,
     transparent,
     transparent 2px,
-    rgba(0, 0, 0, 0.06) 2px,
-    rgba(0, 0, 0, 0.06) 4px
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 4px
   );
   pointer-events: none;
 }
 
 @keyframes blocker-slam {
-  0% { opacity: 0; transform: scale(0.85) translateY(-20px); }
-  60% { transform: scale(1.03); }
-  100% { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-@keyframes ring-pulse {
-  0%, 100% { box-shadow: 0 0 40px rgba(255, 0, 0, 0.15); border-color: rgba(255, 40, 40, 0.4); }
-  50% { box-shadow: 0 0 60px rgba(255, 0, 0, 0.25); border-color: rgba(255, 40, 40, 0.6); }
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 /* ═══════════════════════════════════════════
    SHARED ANIMATIONS
    ═══════════════════════════════════════════ */
-@keyframes canvas-enter {
+@keyframes win95-open {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.97);
+    transform: scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(1);
+  }
+}
+
+@keyframes canvas-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 @keyframes bubble-pop {
   0% {
-    transform: scale(0.8) translateY(10px);
+    transform: scale(0.9);
     opacity: 0;
   }
   100% {
-    transform: scale(1) translateY(0);
+    transform: scale(1);
     opacity: 1;
   }
 }
@@ -485,83 +512,96 @@ html, body, #root {
   to { opacity: 1; }
 }
 
-/* -------------------------------------
-   THE PRODIGY - NEW UI TOOLS
----------------------------------------- */
+/* ═══════════════════════════════════════════
+   THE PRODIGY — RETRO TOOLS
+   ═══════════════════════════════════════════ */
 
 /* Tantrum Shake Animation */
 @keyframes shake {
-  0% { transform: translate(1px, 1px) rotate(0deg); }
-  10% { transform: translate(-1px, -2px) rotate(-1deg); }
-  20% { transform: translate(-3px, 0px) rotate(1deg); }
-  30% { transform: translate(3px, 2px) rotate(0deg); }
-  40% { transform: translate(1px, -1px) rotate(1deg); }
-  50% { transform: translate(-1px, 2px) rotate(-1deg); }
-  60% { transform: translate(-3px, 1px) rotate(0deg); }
-  70% { transform: translate(3px, 1px) rotate(-1deg); }
-  80% { transform: translate(-1px, -1px) rotate(1deg); }
-  90% { transform: translate(1px, 2px) rotate(0deg); }
-  100% { transform: translate(1px, -2px) rotate(-1deg); }
+  0% { transform: translate(2px, 2px); }
+  10% { transform: translate(-2px, -3px); }
+  20% { transform: translate(-4px, 0px); }
+  30% { transform: translate(4px, 3px); }
+  40% { transform: translate(2px, -2px); }
+  50% { transform: translate(-2px, 3px); }
+  60% { transform: translate(-4px, 2px); }
+  70% { transform: translate(4px, 2px); }
+  80% { transform: translate(-2px, -2px); }
+  90% { transform: translate(2px, 3px); }
+  100% { transform: translate(2px, -3px); }
 }
 
 .state-trigger_tantrum .floating-ui-container,
 .state-trigger_tantrum .fullscreen-canvas {
-  animation: shake 0.2s infinite;
-  background: rgba(255, 0, 0, 0.1);
+  animation: shake 0.15s infinite;
+  background: rgba(255, 0, 0, 0.15);
 }
 
-/* Strobe Animation (Police Siren) */
+/* Strobe — Harsh red/blue police siren */
 @keyframes strobe {
-  0% { background: rgba(255, 255, 255, 0.8); }
-  50% { background: rgba(0, 0, 0, 0.8); }
-  100% { background: rgba(255, 255, 255, 0.8); }
+  0% { background: rgba(255, 0, 0, 0.7); }
+  25% { background: rgba(0, 0, 255, 0.7); }
+  50% { background: rgba(255, 0, 0, 0.7); }
+  75% { background: rgba(0, 0, 255, 0.7); }
+  100% { background: rgba(255, 0, 0, 0.7); }
 }
 
 .state-flash_theme_strobe {
-  animation: strobe 0.15s infinite;
+  animation: strobe 0.2s steps(4, end) infinite;
 }
 
-/* Critique Dashboard */
+/* ═══════════════════════════════════════════
+   CRITIQUE DASHBOARD — DOS Code Inspector
+   ═══════════════════════════════════════════ */
 .critique-dashboard {
-  background: rgba(20, 20, 25, 0.85);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 0, 0, 0.4);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 15px 45px rgba(255, 0, 0, 0.15);
+  background: #c0c0c0;
+  border-top: 2px solid #dfdfdf;
+  border-left: 2px solid #dfdfdf;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  padding: 0;
+  box-shadow: 3px 3px 0 #000;
+  width: 380px;
 }
 
 .critique-header {
-  color: #ff4444;
-  font-weight: 800;
+  color: #ffffff;
+  font-weight: 700;
   font-size: 14px;
-  margin-bottom: 12px;
+  padding: 3px 6px;
   display: flex;
   align-items: center;
+  background: linear-gradient(90deg, #800000, #cc0000);
+  font-family: 'VT323', monospace;
+  text-shadow: 1px 1px 0 #000;
 }
 
-.critique-icon { margin-right: 8px; }
+.critique-icon { margin-right: 6px; }
 
 .critique-bad-code {
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 6px;
+  background: #000000;
   padding: 10px;
-  border-left: 3px solid #ff4444;
-  margin-bottom: 12px;
-  font-family: monospace;
-  color: #aaa;
-  font-size: 12px;
+  border: 3px inset #808080;
+  margin: 8px;
+  font-family: 'VT323', 'Courier New', monospace;
+  color: #00ff00;
+  font-size: 14px;
   overflow-x: auto;
+  text-shadow: 0 0 4px rgba(0, 255, 0, 0.4);
 }
 
 .critique-roast-text {
-  color: #fff;
-  font-size: 15px;
-  line-height: 1.4;
-  font-style: italic;
+  color: #ff0000;
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 700;
+  padding: 8px;
+  font-family: 'VT323', monospace;
 }
 
-/* Peekaboo Face */
+/* ═══════════════════════════════════════════
+   PEEKABOO — Retro Robot rises from bottom
+   ═══════════════════════════════════════════ */
 .peekaboo-container {
   position: absolute;
   bottom: 0;
@@ -573,34 +613,42 @@ html, body, #root {
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  animation: peekabooSlide 4s ease-in-out forwards;
+  animation: peekabooSlide 4s steps(12, end) forwards;
 }
 
 .peekaboo-face {
-  background: #ffdbac;
+  background: #c0c0c0;
   width: 250px;
   height: 250px;
-  border-radius: 50% 50% 0 0;
-  border: 4px solid #333;
+  border-top: 3px solid #dfdfdf;
+  border-left: 3px solid #dfdfdf;
+  border-right: 3px solid #404040;
   border-bottom: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 40px;
-  box-shadow: 0 -10px 50px rgba(0,0,0,0.5);
+  padding-top: 30px;
+  box-shadow: 4px -4px 0 #000;
 }
 
-.peekaboo-emoji { font-size: 100px; line-height: 1; }
-.peekaboo-text { 
-  margin-top: 20px; 
-  font-weight: 900; 
-  color: #000; 
-  font-size: 18px; 
+.peekaboo-emoji {
+  font-size: 80px;
+  line-height: 1;
+  filter: drop-shadow(2px 2px 0 #000);
+}
+
+.peekaboo-text {
+  margin-top: 16px;
+  font-weight: 700;
+  color: #ff0000;
+  font-size: 16px;
   text-align: center;
-  background: #fff;
+  background: #000000;
   padding: 4px 12px;
-  border-radius: 20px;
-  border: 2px solid #000;
+  border: 2px solid #ff0000;
+  font-family: 'VT323', 'Courier New', monospace;
+  text-shadow: 0 0 6px rgba(255, 0, 0, 0.5);
+  letter-spacing: 2px;
 }
 
 @keyframes peekabooSlide {
@@ -610,81 +658,143 @@ html, body, #root {
   100% { transform: translate(-50%, 100%); }
 }
 
-/* Parental Override (FaceTime) */
+/* ═══════════════════════════════════════════
+   PARENTAL OVERRIDE — Win95 Incoming Call
+   ═══════════════════════════════════════════ */
 .parental-override {
   position: absolute;
   top: 40px;
   right: 40px;
   width: 320px;
-  background: rgba(30, 30, 30, 0.95);
-  backdrop-filter: blur(25px);
-  border-radius: 24px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  background: #c0c0c0;
+  border-top: 2px solid #dfdfdf;
+  border-left: 2px solid #dfdfdf;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  box-shadow: 4px 4px 0 #000;
   pointer-events: auto;
-  border: 1px solid rgba(255,255,255,0.1);
-  animation: ftBounce 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  animation: ftBounce 0.2s steps(3, end);
 }
 
 .facetime-ui {
-  padding: 24px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
+/* Title bar for the call window */
+.facetime-ui::before {
+  content: '☎ Windows Messenger - Incoming Call';
+  display: block;
+  width: 100%;
+  padding: 3px 4px;
+  background: linear-gradient(90deg, #000080, #1084d0);
+  color: #ffffff;
+  font-size: 13px;
+  font-family: 'VT323', monospace;
+  text-shadow: 1px 1px 0 #000;
+}
+
 .ft-caller {
-  color: #fff;
-  font-size: 32px;
-  font-weight: 300;
+  color: #000000;
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 16px;
   margin-bottom: 4px;
+  font-family: 'VT323', monospace;
 }
 
 .ft-type {
-  color: #aaa;
+  color: #808080;
   font-size: 14px;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
+  font-family: 'VT323', monospace;
 }
 
 .ft-buttons {
   display: flex;
-  gap: 40px;
+  gap: 20px;
   width: 100%;
   justify-content: center;
+  padding: 0 16px 16px;
 }
 
 .ft-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   cursor: not-allowed;
 }
 
 .ft-btn span {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
+  width: 50px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
-  color: #fff;
+  font-size: 16px;
+  color: #000;
+  background: #c0c0c0;
+  border-top: 2px solid #dfdfdf;
+  border-left: 2px solid #dfdfdf;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  font-family: 'VT323', monospace;
 }
 
-.ft-btn.decline span { background: #ff3b30; }
-.ft-btn.accept span { background: #34c759; }
-.ft-btn p { color: #fff; font-size: 14px; }
+.ft-btn.decline span {
+  background: #c0c0c0;
+  color: #ff0000;
+}
+
+.ft-btn.accept span {
+  background: #c0c0c0;
+  color: #008000;
+}
+
+.ft-btn p {
+  color: #000000;
+  font-size: 13px;
+  font-family: 'VT323', monospace;
+}
 
 @keyframes ftBounce {
-  0% { transform: scale(0.8); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
+/* ═══════════════════════════════════════════
+   PRODIGY HEADER — Red variant title bar
+   ═══════════════════════════════════════════ */
 .prodigy-header {
-  border-left-color: #ff00ea !important;
+  background: linear-gradient(90deg, #800000, #cc0000) !important;
 }
 
 .sender-prodigy .bubble-text {
-  color: #ff00ea;
-  font-weight: 500;
+  color: #ff00ff;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 0, 255, 0.4);
+}
+
+/* ═══════════════════════════════════════════
+   SUBTITLE OVERLAY — DOS prompt style
+   ═══════════════════════════════════════════ */
+.subtitle-overlay {
+  background: #000000 !important;
+  border: 2px solid #00ff00 !important;
+  border-radius: 0 !important;
+  color: #00ff00 !important;
+  font-family: 'VT323', 'Courier New', monospace !important;
+  text-shadow: 0 0 6px rgba(0, 255, 0, 0.5) !important;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.8) !important;
+}
+
+/* ═══════════════════════════════════════════
+   CURSOR BLINK — Classic DOS cursor
+   ═══════════════════════════════════════════ */
+@keyframes cursor-blink {
+  0%, 100% { border-right-color: transparent; }
+  50% { border-right-color: #00ff00; }
 }

@@ -5,6 +5,8 @@ import { WebSocketServer } from 'ws';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as http from 'http';
+import { AgentRuntime } from './agent/AgentRuntime';
+import { TelemetryFrame } from '../shared/types';
 
 // ─── Load .env from project root ───
 const projectRoot = path.resolve(__dirname, '..', '..', '..');
@@ -17,8 +19,6 @@ if (fs.existsSync(envPath)) {
 }
 
 // ─── Configuration ───
-const OVERLAY_WIDTH = 420;
-const OVERLAY_HEIGHT = 350;
 const SPLASH_WIDTH = 500;
 const SPLASH_HEIGHT = 320;
 const DEBUG_WIDTH = 700;
@@ -38,6 +38,9 @@ let splashAnimationDone = false;
 let brainReady = false;
 let hasTransitioned = false;
 
+// ─── Agent Runtime ───
+const agentRuntime = new AgentRuntime(BRAIN_PORT, log);
+
 // ─── Centralized Logger ───
 function log(source: string, level: string, message: string, skipTerminal = false): void {
   const timestamp = Date.now();
@@ -53,13 +56,11 @@ function log(source: string, level: string, message: string, skipTerminal = fals
     }
   }
 
-  // Forward to debug window if it exists
   if (debugWindow && !debugWindow.isDestroyed()) {
     debugWindow.webContents.send('debug-log', { timestamp, source, level, message });
   }
 }
 
-// ─── Update splash status ───
 function updateSplashStatus(message: string, level: string = 'info'): void {
   log('launcher', level, message);
   if (splashWindow && !splashWindow.isDestroyed()) {
@@ -104,7 +105,7 @@ function createSplashWindow(): void {
 }
 
 // ═══════════════════════════════════════════
-// STEP 2: Debug Log Window (conditional)
+// STEP 2: Debug Window
 // ═══════════════════════════════════════════
 function createDebugWindow(): void {
   if (!DEBUG_ENABLED) return;
@@ -118,10 +119,10 @@ function createDebugWindow(): void {
     x: screenW - DEBUG_WIDTH - 20,
     y: 20,
     frame: true,
-    resizable: true,
-    skipTaskbar: false,
     alwaysOnTop: false,
-    title: 'Anti-Copilot Debug Monitor',
+    skipTaskbar: false,
+    resizable: true,
+    title: 'Anti-Copilot Debug',
     webPreferences: {
       preload: path.join(__dirname, 'preload-debug.js'),
       contextIsolation: true,
@@ -136,106 +137,68 @@ function createDebugWindow(): void {
     debugWindow.loadFile(path.join(__dirname, '../renderer/debug.html'));
   }
 
-  debugWindow.on('closed', () => {
-    debugWindow = null;
-  });
-
-  log('launcher', 'info', `Debug window created (ANTI_COPILOT_DEBUG=${DEBUG_ENABLED})`);
+  log('launcher', 'info', 'Debug window created (ANTI_COPILOT_DEBUG=true)');
 }
 
 // ═══════════════════════════════════════════
-// STEP 3: Check & Install VS Code Extension
+// STEP 3: Check & Install Extension
 // ═══════════════════════════════════════════
-function checkAndInstallExtension(): boolean {
+function checkAndInstallExtension(): void {
   updateSplashStatus('Checking VS Code extension...');
   
   try {
-    const output = execSync('code --list-extensions', { encoding: 'utf-8', timeout: 10000 });
-    const extensions = output.split('\n').map(e => e.trim().toLowerCase());
-    
-    if (extensions.includes(EXTENSION_ID.toLowerCase())) {
-      updateSplashStatus('Extension found ✓', 'success');
-      log('launcher', 'info', 'VS Code extension is already installed');
-      return true;
+    const result = execSync('code --list-extensions', { encoding: 'utf-8', timeout: 10000 });
+    if (result.includes(EXTENSION_ID)) {
+      log('launcher', 'info', 'Extension found ✓');
+      updateSplashStatus('VS Code extension is already installed');
+      return;
     }
+  } catch {
+    log('launcher', 'warn', 'Could not list extensions, attempting install');
+  }
 
-    // Extension not installed — try to install from local .vsix
-    updateSplashStatus('Installing VS Code extension...');
-    const vsixPath = path.join(projectRoot, 'vscode-sensor', `${EXTENSION_ID}.vsix`);
-    
-    if (fs.existsSync(vsixPath)) {
-      execSync(`code --install-extension "${vsixPath}"`, { encoding: 'utf-8', timeout: 30000 });
-      updateSplashStatus('Extension installed ✓', 'success');
-      log('launcher', 'info', 'VS Code extension installed from .vsix');
-      return true;
-    }
+  const vsixDir = path.join(projectRoot, 'vscode-sensor');
+  const vsixFiles = fs.existsSync(vsixDir) 
+    ? fs.readdirSync(vsixDir).filter(f => f.endsWith('.vsix'))
+    : [];
 
-    // No .vsix found — try to build and install from source
-    updateSplashStatus('Building extension from source...');
-    const sensorDir = path.join(projectRoot, 'vscode-sensor');
-    
+  if (vsixFiles.length > 0) {
+    const vsixPath = path.join(vsixDir, vsixFiles[0]);
     try {
-      execSync('npx tsc -p ./', { cwd: sensorDir, encoding: 'utf-8', timeout: 30000 });
-      
-      // Check if vsce is available to package
-      try {
-        execSync('npx vsce package --no-dependencies', { cwd: sensorDir, encoding: 'utf-8', timeout: 30000 });
-        // Find the generated .vsix
-        const files = fs.readdirSync(sensorDir);
-        const vsixFile = files.find(f => f.endsWith('.vsix'));
-        if (vsixFile) {
-          const generatedVsix = path.join(sensorDir, vsixFile);
-          execSync(`code --install-extension "${generatedVsix}"`, { encoding: 'utf-8', timeout: 30000 });
-          updateSplashStatus('Extension built & installed ✓', 'success');
-          log('launcher', 'info', 'VS Code extension built and installed from source');
-          return true;
-        }
-      } catch {
-        log('launcher', 'warn', 'vsce package failed — extension compiled but not packaged as .vsix');
-      }
-    } catch (buildErr) {
-      log('launcher', 'warn', `Extension build failed: ${buildErr}`);
+      execSync(`code --install-extension "${vsixPath}" --force`, { timeout: 30000 });
+      updateSplashStatus('Extension installed ✓', 'success');
+    } catch (installErr) {
+      log('launcher', 'warn', `Extension install failed: ${installErr}`);
+      updateSplashStatus('Extension install failed', 'warn');
     }
-
-    updateSplashStatus('Extension not installed (manual install needed)', 'warn');
-    return false;
-  } catch (err) {
-    log('launcher', 'warn', `Could not check extensions (VS Code CLI not found?): ${err}`);
-    updateSplashStatus('Extension check skipped', 'warn');
-    return false;
+  } else {
+    updateSplashStatus('No .vsix found — skipping install', 'warn');
   }
 }
 
 // ═══════════════════════════════════════════
-// STEP 4: Start Brain Server (Next.js)
+// STEP 4: Start Brain Server
 // ═══════════════════════════════════════════
 function startBrainServer(): void {
-  updateSplashStatus('Checking for orphaned processes...');
-
   const killPort = (port: number) => {
     try {
       if (process.platform === 'win32') {
-        const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf-8' });
-        const lines = output.split('\n');
+        const output = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000 });
+        const lines = output.trim().split('\n');
         for (const line of lines) {
-          if (line.includes('LISTENING')) {
-            const parts = line.trim().split(/\s+/);
-            const pid = parts[parts.length - 1];
-            if (pid && pid !== '0') {
-              log('launcher', 'info', `Killing orphaned process on port ${port} (PID: ${pid})`);
-              execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-            }
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && /^\d+$/.test(pid)) {
+            log('launcher', 'info', `Killing orphaned process on port ${port} (PID: ${pid})`);
+            execSync(`taskkill /pid ${pid} /F`, { stdio: 'ignore', timeout: 5000 });
           }
         }
-      } else {
-        execSync(`lsof -ti:${port} | xargs kill -9`, { stdio: 'ignore' });
       }
-    } catch (e) {
+    } catch {
       // Ignore
     }
   };
 
-  // Kill any existing process on ports
   killPort(BRAIN_PORT);
   killPort(WS_PORT);
 
@@ -243,12 +206,10 @@ function startBrainServer(): void {
 
   const brainDir = path.join(projectRoot, 'vercel-brain');
   
-  // Check if vercel-brain has node_modules
   if (!fs.existsSync(path.join(brainDir, 'node_modules'))) {
     log('launcher', 'warn', 'vercel-brain/node_modules missing — brain may fail to start');
   }
 
-  // Spawn Next.js dev server with env vars forwarded
   const isWindows = process.platform === 'win32';
   brainProcess = spawn(
     isWindows ? 'npx.cmd' : 'npx',
@@ -267,11 +228,11 @@ function startBrainServer(): void {
       try {
         const parsed = JSON.parse(line.trim());
         if (parsed.type === 'debug') {
-          log(parsed.source || 'brain', 'debug', parsed.message, true); // skip terminal
+          log(parsed.source || 'brain', 'debug', parsed.message, true);
           return;
         }
-      } catch (e) {
-        // Not a structured debug log
+      } catch {
+        // Not structured
       }
       log('brain', 'info', line.trim());
     });
@@ -280,7 +241,6 @@ function startBrainServer(): void {
   brainProcess.stderr?.on('data', (data: Buffer) => {
     const lines = data.toString().split('\n').filter(l => l.trim());
     lines.forEach(line => {
-      // Next.js prints some info to stderr (like "ready" messages)
       if (line.includes('Ready') || line.includes('ready') || line.includes('started')) {
         log('brain', 'info', line.trim());
       } else {
@@ -299,14 +259,13 @@ function startBrainServer(): void {
     brainProcess = null;
   });
 
-  // Poll until brain is ready
   pollBrainReady();
 }
 
 function pollBrainReady(attempts: number = 0): void {
   if (brainReady || hasTransitioned) return;
 
-  if (attempts > 30) { // 30 * 1s = 30 second timeout
+  if (attempts > 30) {
     log('launcher', 'warn', 'Brain server did not respond in time — continuing anyway');
     updateSplashStatus('Brain timeout — continuing...', 'warn');
     brainReady = true;
@@ -356,23 +315,23 @@ function checkTransitionToOverlay(): void {
 
   updateSplashStatus('Ready.', 'success');
 
-  // Small delay for the "Ready" message to be visible
   setTimeout(() => {
     createOverlayWindow();
     startWebSocketServer();
 
-    // Close splash
+    // Start the Agent Runtime
+    agentRuntime.start();
+
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.close();
       splashWindow = null;
     }
 
-    log('launcher', 'info', '🔥 Anti-Copilot is online');
+    log('launcher', 'info', '🔥 Anti-Copilot is online — Agent Runtime active');
 
-    // Auto-open VS Code if not open
+    // Auto-open VS Code
     try {
       log('launcher', 'info', 'Opening VS Code automatically...');
-      // Launch detached so it doesn't block, use shell: true for Windows .cmd
       const child = spawn('code', [projectRoot], {
         detached: true,
         stdio: 'ignore',
@@ -420,30 +379,33 @@ function createOverlayWindow(): void {
     overlayWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  // Make window click-through by default
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
-  // Cursor following logic
+  // Cursor tracking
   setInterval(() => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       try {
         const point = screen.getCursorScreenPoint();
-        overlayWindow.webContents.send('cursor-update', point);
-      } catch (err) {
-        // Ignore disposed render frame errors during reloads
+        agentRuntime.overlayBridge.sendCursorUpdate(point);
+      } catch {
+        // Ignore
       }
     }
-  }, 16); // ~60fps cursor tracking
+  }, 16);
 
-  // Send a self-test trigger after 2 seconds
+  // Connect overlay to agent runtime
+  agentRuntime.overlayBridge.setWindow(overlayWindow);
+
+  // Send initial self-test after load
   overlayWindow.webContents.on('did-finish-load', () => {
     setTimeout(() => {
       if (overlayWindow && !overlayWindow.isDestroyed()) {
-        log('overlay', 'info', 'Sending self-test trigger');
+        log('overlay', 'info', 'Sending agent self-test');
         overlayWindow.webContents.send('trigger', {
           type: 'action',
           action: 'mock',
-          content: 'Anti-Copilot is online and watching you code.',
+          content: 'Anti-Copilot Agent Runtime is online. I am watching.',
+          avatarEmotion: 'smug',
         });
       }
     }, 2000);
@@ -453,7 +415,7 @@ function createOverlayWindow(): void {
 }
 
 // ═══════════════════════════════════════════
-// WebSocket Server (for VS Code extension)
+// WebSocket Server — Telemetry + Action Bridge
 // ═══════════════════════════════════════════
 function startWebSocketServer(): void {
   wss = new WebSocketServer({ port: WS_PORT });
@@ -465,25 +427,45 @@ function startWebSocketServer(): void {
       try {
         const message = JSON.parse(data.toString());
         
-        if (message.type === 'debug') {
-          log(message.source || 'sensor', 'debug', message.message, true); // skip terminal
+        // ─── Telemetry frames → feed into Agent Runtime ───
+        if (message.type === 'telemetry') {
+          agentRuntime.ingestTelemetry(message as TelemetryFrame);
           return;
         }
 
-        log('sensor', 'info', `Trigger: ${message.action} — "${(message.content || '').substring(0, 60)}"`);
-
-        // For block_window, make the window interactable
-        if (message.action === 'block_window' && overlayWindow && !overlayWindow.isDestroyed()) {
-          overlayWindow.setIgnoreMouseEvents(false);
-          setTimeout(() => {
-            if (!overlayWindow || overlayWindow.isDestroyed()) return;
-            overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-          }, 8000);
+        // ─── Code context updates ───
+        if (message.type === 'code_context') {
+          agentRuntime.updateCodeContext(message);
+          return;
         }
 
-        // Forward trigger to overlay renderer
-        if (overlayWindow && !overlayWindow.isDestroyed()) {
-          overlayWindow.webContents.send('trigger', message);
+        // ─── Diagnostics updates ───
+        if (message.type === 'diagnostics') {
+          agentRuntime.updateDiagnostics(message);
+          return;
+        }
+
+        // ─── Debug messages ───
+        if (message.type === 'debug') {
+          log(message.source || 'sensor', 'debug', message.message, true);
+          return;
+        }
+
+        // ─── Legacy action messages (backwards compat) ───
+        if (message.type === 'action' || message.action) {
+          log('sensor', 'info', `Legacy trigger: ${message.action} — "${(message.content || '').substring(0, 60)}"`);
+
+          if (message.action === 'block_window' && overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.setIgnoreMouseEvents(false);
+            setTimeout(() => {
+              if (!overlayWindow || overlayWindow.isDestroyed()) return;
+              overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+            }, 8000);
+          }
+
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.webContents.send('trigger', message);
+          }
         }
       } catch (parseErr) {
         log('sensor', 'error', `Failed to parse message: ${parseErr}`);
@@ -518,22 +500,15 @@ ipcMain.on('splash-ready', () => {
 // ═══════════════════════════════════════════
 app.whenReady().then(async () => {
   log('launcher', 'info', '═══════════════════════════════════════');
-  log('launcher', 'info', ' ANTI-COPILOT LAUNCHER v0.1.0');
+  log('launcher', 'info', ' ANTI-COPILOT AGENT v0.2.0');
   log('launcher', 'info', `  Debug: ${DEBUG_ENABLED ? 'ENABLED' : 'DISABLED'}`);
   log('launcher', 'info', '═══════════════════════════════════════');
 
-  // Step 1: Show splash
   createSplashWindow();
-
-  // Step 2: Debug window (if enabled)
   createDebugWindow();
 
-  // Step 3: Check/install extension (runs sync, fast)
-  // Small delay to let splash render first
   setTimeout(() => {
     checkAndInstallExtension();
-
-    // Step 4: Start brain server (async)
     startBrainServer();
   }, 500);
 });
@@ -560,11 +535,13 @@ process.on('SIGTERM', () => {
 });
 
 function cleanup(): void {
+  // Stop agent runtime
+  agentRuntime.stop();
+
   // Kill brain server
   if (brainProcess && !brainProcess.killed) {
     log('launcher', 'info', 'Killing brain server...');
     if (process.platform === 'win32') {
-      // On Windows, spawn a taskkill to ensure the whole process tree dies
       try {
         execSync(`taskkill /pid ${brainProcess.pid} /T /F`, { stdio: 'ignore' });
       } catch {
@@ -576,7 +553,6 @@ function cleanup(): void {
     brainProcess = null;
   }
 
-  // Close WebSocket server
   if (wss) {
     wss.close();
     wss = null;
