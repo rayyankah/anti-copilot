@@ -17,9 +17,8 @@ export class SensorManager {
   private readonly PAUSE_THRESHOLD_MS = 10000;
   private readonly LARGE_PASTE_THRESHOLD = 50;
   private readonly CODE_DEBOUNCE_MS = 15000; // Only fire code trigger once per 15 seconds
-  private readonly GLOBAL_COOLDOWN_MS = 30000; // Prevent any trigger from firing if another fired recently
+  private readonly GLOBAL_COOLDOWN_MS = 15000; // Prevent any trigger from firing if another fired recently
   private readonly WPM_WINDOW_MS = 5000; // 60-second sliding window for WPM
-  private actionHistory: string[] = [];
   private statusBarItem: vscode.StatusBarItem;
 
   constructor(
@@ -258,41 +257,19 @@ export class SensorManager {
 
   private async emitTrigger(type: TriggerType, metadata: Record<string, unknown>): Promise<void> {
     const now = Date.now();
-    // Pause triggers bypass cooldown — we always want to react to awkward silence
-    const isPause = type === TriggerType.Pause;
-    if (!isPause && now - this.lastTriggerTime < this.GLOBAL_COOLDOWN_MS) {
+    if (now - this.lastTriggerTime < this.GLOBAL_COOLDOWN_MS) {
       console.log(`[Anti-Copilot Sensor] Skipping trigger ${type} due to cooldown.`);
       return;
     }
     
     this.lastTriggerTime = now;
     const apiUrl = this.getApiUrl();
-    
-    // Extract recent code context
-    let codeSnippet = '';
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      const doc = editor.document;
-      const selection = editor.selection;
-      const startLine = Math.max(0, selection.active.line - 10);
-      const endLine = Math.min(doc.lineCount - 1, selection.active.line + 10);
-      codeSnippet = doc.getText(new vscode.Range(startLine, 0, endLine, 1000));
-    }
-
     const payload = {
       userId: this.identity.uuid,
       username: this.identity.username,
       trigger: type,
       timestamp: now,
       metadata,
-      metrics: {
-        wpm: this.calculateWPM(),
-        pauseDuration: type === TriggerType.Pause ? this.PAUSE_THRESHOLD_MS : 0,
-        pastedLength: type === TriggerType.LargePaste ? metadata.pastedLength : 0,
-      },
-      currentError: this.terminalErrors.length > 0 ? this.terminalErrors[this.terminalErrors.length - 1] : null,
-      codeSnippet,
-      actionHistory: this.actionHistory,
     };
 
     try {
@@ -319,12 +296,6 @@ export class SensorManager {
 
       const actionResponse = await response.json() as { action: ActionType, content: string, mediaUrl?: string, duration?: number };
       
-      // Only track real actions in history (not idle/silence)
-      if (actionResponse.action && actionResponse.action !== 'idle' && actionResponse.action !== 'do_nothing' && actionResponse.action !== 'stay_silent') {
-        this.actionHistory.push(actionResponse.action);
-        if (this.actionHistory.length > 5) this.actionHistory.shift();
-      }
-      
       this.wsClient.send({ type: 'debug', source: 'sensor', message: `API Response <- [${actionResponse.action}]` });
       console.log('[Anti-Copilot Sensor] Received Action:', actionResponse.action);
       this.statusBarItem.text = `$(zap) Anti-Copilot: ${actionResponse.action}`;
@@ -334,7 +305,7 @@ export class SensorManager {
         await this.themeController.forceLightMode();
         // Forward to overlay to show text as well
         this.wsClient.send({ ...actionResponse, type: 'action' });
-      } else if (actionResponse.action === ActionType.FlashLightMode || actionResponse.action === 'flash_theme_strobe') {
+      } else if (actionResponse.action === ActionType.FlashLightMode) {
         this.wsClient.send({ ...actionResponse, type: 'action' });
         
         let isLight = false;

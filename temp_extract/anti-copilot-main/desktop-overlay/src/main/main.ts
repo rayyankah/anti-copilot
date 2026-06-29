@@ -426,12 +426,8 @@ function createOverlayWindow(): void {
   // Cursor following logic
   setInterval(() => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
-      try {
-        const point = screen.getCursorScreenPoint();
-        overlayWindow.webContents.send('cursor-update', point);
-      } catch (err) {
-        // Ignore disposed render frame errors during reloads
-      }
+      const point = screen.getCursorScreenPoint();
+      overlayWindow.webContents.send('cursor-update', point);
     }
   }, 16); // ~60fps cursor tracking
 

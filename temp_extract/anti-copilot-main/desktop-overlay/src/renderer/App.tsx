@@ -39,7 +39,6 @@ const GOSSIP_CAST = [
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uiState, setUiState] = useState<string>('idle');
-  const [currentAction, setCurrentAction] = useState<any>(null);
   const [videoUrl, setVideoUrl] = useState('');
   const [isExiting, setIsExiting] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,22 +91,14 @@ export default function App() {
     window.antiCopilot.onTrigger((trigger: TriggerPayload) => {
       console.log('[Anti-Copilot Renderer] Trigger received:', trigger);
 
-      const { action, content, payload } = trigger;
-
-      // If the AI chose to stay silent, do nothing at all
-      if (action === 'idle' || action === 'do_nothing' || action === 'stay_silent') {
-        console.log('[Anti-Copilot Renderer] AI chose silence, ignoring.');
-        return;
-      }
-
-      // Clear any lingering state only when we have a real new action
+      // Clear any lingering state
       clearAllTimers();
       silenceAll();
       setIsExiting(false);
       setMessages([]);
       setVideoUrl('');
 
-      setCurrentAction(trigger);
+      const { action, content, payload } = trigger;
       setUiState(action);
 
       // Helper to speak and incrementally reveal text synced with audio
@@ -141,9 +132,9 @@ export default function App() {
           if (event.name === 'word') {
             let end = event.charIndex;
             // Advance past the current word
-            while (end < fullText.length && /\S/.test(fullText[end])) end++;
+            while (end < fullText.length && /\\S/.test(fullText[end])) end++;
             // Advance past trailing punctuation/spaces to preempt the gap
-            while (end < fullText.length && /[\s.,!?]/.test(fullText[end])) end++;
+            while (end < fullText.length && /[\\s.,!?]/.test(fullText[end])) end++;
             
             currentTargetIndex = end;
           }
@@ -210,66 +201,9 @@ export default function App() {
         }
 
         case 'force_light_mode':
-        case 'flash_light_mode':
-        case 'flash_theme_strobe': {
-          speakAndRender(content || 'Enjoy the sunlight.', 'The Prodigy', 'mocking');
+        case 'flash_light_mode': {
+          speakAndRender(content || 'Enjoy the sunlight.', 'Anti-Copilot', 'mocking');
           scheduleHide(6000);
-          break;
-        }
-
-        case 'speak_roast': {
-          speakAndRender(content || '', 'The Prodigy', 'mocking', false);
-          scheduleHide(8000);
-          break;
-        }
-
-        case 'trigger_tantrum': {
-          speakAndRender(content || "I'M BORED! THIS CODE IS TRASH!", 'The Prodigy', 'mocking', false);
-          scheduleHide(3000);
-          break;
-        }
-
-        case 'flash_theme_strobe': {
-          speakAndRender(content || "WEEE WOOO WEEE WOOO STOP CODING!", 'The Prodigy', 'mocking', false);
-          scheduleHide(4000);
-          break;
-        }
-
-        case 'trigger_peekaboo': {
-          speakAndRender(content || "What's that? Are you trying to fix it? Let me see!", 'The Prodigy', 'mocking', false);
-          scheduleHide(4000);
-          break;
-        }
-
-        case 'play_brainrot': {
-          setVideoUrl('https://www.youtube.com/embed/n_Dv4JMiwK8?autoplay=1&controls=0&mute=1');
-          speakAndRender(content || "I can't watch you type anymore. Here's Subway Surfers.", 'The Prodigy', 'mocking', false);
-          scheduleHide(15000);
-          break;
-        }
-
-        case 'parental_override': {
-          speakAndRender(content || "Timmy! Get off that computer right now and go clean your room!", 'Mom', 'exhausted', false);
-          setTimeout(() => {
-            speakWithEmotion("Hold on Mom! I'm trying to show this adult how to fix a basic pointer bug!", false);
-          }, 4500);
-          scheduleHide(10000);
-          break;
-        }
-
-        case 'critique_code_semantics': {
-          speakAndRender(content || '', 'Code Review', 'mocking', false);
-          scheduleHide(10000);
-          break;
-        }
-
-        case 'block_code_view': {
-          speakAndRender(content || "Access Denied. You lost your editor privileges.", 'The Prodigy', 'mocking', false);
-          // @ts-ignore
-          const duration = trigger.durationSeconds ? trigger.durationSeconds * 1000 : 8000;
-          window.antiCopilot.setClickThrough(false);
-          setTimeout(() => window.antiCopilot.setClickThrough(true), duration);
-          scheduleHide(duration);
           break;
         }
 
@@ -371,95 +305,6 @@ export default function App() {
                   className="video-iframe"
                 />
               </div>
-            </div>
-          )}
-
-          {/* ─── State: Chat Bubble for Roast & Actions ─── */}
-          {['speak_roast', 'trigger_tantrum', 'flash_theme_strobe', 'block_code_view'].includes(uiState) && (
-            <div className="chatbox-container">
-              <div className="chatbox-header prodigy-header">
-                <span className="chatbox-icon">🧢</span>
-                <span className="chatbox-title">THE PRODIGY</span>
-              </div>
-              <div className="chat-bubble sender-prodigy">
-                {messages[0] && <p className="bubble-text">{messages[0].text}</p>}
-              </div>
-            </div>
-          )}
-
-          {/* ─── State: Brainrot Video Player ─── */}
-          {uiState === 'play_brainrot' && (
-            <div className="video-player-overlay">
-              <div className="video-chrome prodigy-header">
-                <span className="chatbox-title">ATTENTION SPAN RESTORER</span>
-              </div>
-              <iframe
-                src="https://www.youtube.com/embed/n_Dv4JMiwK8?autoplay=1&controls=0&mute=1"
-                title="Subway Surfers"
-                allow="autoplay; encrypted-media"
-                className="video-iframe"
-              />
-              {messages[0] && (
-                <div className="subtitle-overlay" style={{ marginTop: '10px', backgroundColor: 'rgba(0,0,0,0.8)', padding: '10px', borderRadius: '8px', color: '#fff', fontSize: '1.2em' }}>
-                  {messages[0].text}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ─── State: Critique Dashboard ─── */}
-          {uiState === 'critique_code_semantics' && (
-            <div className="critique-dashboard">
-              <div className="critique-header">
-                <span className="critique-icon">🔎</span> CODE REVIEW
-              </div>
-              <div className="critique-bad-code">
-                {/* @ts-ignore */}
-                <pre><code>{currentAction?.highlight_target || 'function makeBadChoices() {}'}</code></pre>
-              </div>
-              <div className="critique-roast-text">
-                {messages[0]?.text || 'This code is garbage.'}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ─── State: The Peekaboo Face ─── */}
-      {uiState === 'trigger_peekaboo' && (
-        <div className="peekaboo-container">
-          <div className="peekaboo-face">
-            <span className="peekaboo-emoji">👶🏼</span>
-            <div className="peekaboo-text">"ARE WE DONE YET?"</div>
-          </div>
-          {messages[0] && (
-            <div className="subtitle-overlay" style={{ position: 'absolute', bottom: '20%', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.8)', padding: '15px 30px', borderRadius: '12px', color: '#fff', fontSize: '2em', fontWeight: 'bold' }}>
-              {messages[0].text}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ─── State: Parental Override (FaceTime) ─── */}
-      {uiState === 'parental_override' && (
-        <div className="parental-override">
-          <div className="facetime-ui">
-            <div className="ft-caller">Mom</div>
-            <div className="ft-type">FaceTime Audio...</div>
-            <div className="ft-buttons">
-              <div className="ft-btn decline">
-                <span>&#128222;</span>
-                <p>Decline</p>
-              </div>
-              <div className="ft-btn accept">
-                <span>&#128222;</span>
-                <p>Accept</p>
-              </div>
-            </div>
-          </div>
-          {messages[0] && (
-            <div className="subtitle-overlay" style={{ position: 'absolute', bottom: '10%', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(0,0,0,0.8)', padding: '15px 30px', borderRadius: '12px', color: '#fff', fontSize: '1.5em' }}>
-              {messages[0].text}
             </div>
           )}
         </div>

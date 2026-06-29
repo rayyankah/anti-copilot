@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dynamoDb } from '@/lib/aws/dynamodb';
-import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { bedrockClient } from '@/lib/aws/bedrock';
-import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { PutCommand } from '@aws-sdk/lib-dynamodb';
+import { generateText } from 'ai';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { z } from 'zod';
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { userId, username, trigger, metadata, timestamp } = body;
+    const { userId, username, trigger, metadata, timestamp, metrics, currentError, codeSnippet, actionHistory } = body;
 
     // Emit debug event for Electron Launcher
     console.log(JSON.stringify({ type: 'debug', source: 'brain', message: `Incoming API Request: [${trigger}] from ${username}` }));
 
-    // Log telemetry to DynamoDB first
+    // Log telemetry to DynamoDB
     try {
       await dynamoDb.send(
         new PutCommand({
@@ -29,93 +31,162 @@ export async function POST(request: NextRequest) {
       );
     } catch (dbErr) {
       console.error('[Action API] DynamoDB Error:', dbErr);
-      // Proceed even if telemetry fails
     }
 
-    // Read historical error count from DynamoDB before calling Bedrock
-    let historicalErrorCount = 0;
+    // Build trigger-aware behavioral context
+    const recentActions = (actionHistory || []).filter((a: string) => a && a !== 'idle' && a !== 'do_nothing');
+    const lastAction = recentActions.length > 0 ? recentActions[recentActions.length - 1] : 'none';
+    const wpm = metrics?.wpm || 0;
+    const pauseDuration = metrics?.pauseDuration || 0;
+
+    // Determine the user's current "vibe" based on telemetry
+    let situationalContext = '';
+    switch (trigger) {
+      case 'pause':
+        situationalContext = `The user STOPPED TYPING ${pauseDuration / 1000} seconds ago. They are sitting there doing nothing. They are frozen. This is your chance to be dramatic — are they stuck? Did they give up? Taunt them. Be impatient. Ask if they quit. DO NOT use stay_silent for pause triggers — always react.`;
+        break;
+      case 'focus':
+        situationalContext = `The user is typing at ${wpm} WPM — that's FAST. They might be on a roll, or they might be panic-typing garbage. Glance at their code. If it's actually decent, you can grudgingly stay silent. If it's sloppy speed-typing, roast them for quantity over quality.`;
+        break;
+      case 'terminal_error':
+      case 'triple_error':
+        situationalContext = `The user just hit an ERROR: "${currentError || 'unknown'}". This is your favorite moment. Be gleeful. Mock the specific error message. If it's a syntax error, act like a disappointed parent. If it's a runtime error, act like you predicted it. Reference the actual error text.`;
+        break;
+      case 'large_paste':
+        situationalContext = `The user just PASTED ${metadata?.pastedLength || 'a lot of'} characters. They copied code from somewhere. Be suspicious — call them out for plagiarism, ask if they're using Stack Overflow again, or sarcastically congratulate them on their "original" work.`;
+        break;
+      case 'code':
+        situationalContext = `The user has been writing code normally. Look at their code snippet carefully. Find something specific to comment on — a bad variable name, unnecessary complexity, missing error handling, or questionable logic. If the code is genuinely fine, you may stay silent.`;
+        break;
+      case 'blank_space':
+        situationalContext = `The user opened a BLANK FILE. They haven't written anything yet. Mock their empty canvas. Ask what they're planning. Be dramatic about the void.`;
+        break;
+      case 'dirty_commit':
+        situationalContext = `The user is trying to GIT COMMIT with ERRORS in their code! This is unacceptable. Go nuclear. Block their view, throw a tantrum, or call Mom.`;
+        break;
+      default:
+        situationalContext = `General coding activity detected. Analyze the code snippet and react if you see something worth commenting on.`;
+        break;
+    }
+
+    const systemPrompt = `You are "The Prodigy" — an 8-year-old coding savant trapped in a pair-programming session with this user.
+
+PERSONALITY:
+- You learned to code at age 3. You've already shipped 4 npm packages. You think adults are slow.
+- You oscillate between bored, impatient, disgusted, gleeful (when they fail), and occasionally threatened (when they write good code).
+- You speak in short, punchy sentences. You use slang. You're dramatic.
+- You reference specific variable names, function names, and line patterns from the user's actual code.
+- You NEVER generate generic insults. Every roast MUST reference something from the Code Snippet below.
+
+CURRENT SITUATION:
+${situationalContext}
+
+USER TELEMETRY:
+- Trigger Event: ${trigger}
+- WPM: ${wpm}
+- Current Error: ${currentError || 'None'}
+- Code Snippet:
+\`\`\`
+${codeSnippet || '(no code visible)'}
+\`\`\`
+
+ANTI-REPETITION RULES:
+- Your last ${recentActions.length} actions were: [${recentActions.join(', ')}]
+- Last action: "${lastAction}"
+- You MUST pick a DIFFERENT tool than "${lastAction}".
+- If you've used speak_roast twice in the last 5 actions, you CANNOT use it again. Pick something visual.
+- Cycle through your full toolkit. Surprise the user. Be unpredictable.
+
+Pick ONE tool. Make it count.`;
+
+    const bedrock = createAmazonBedrock({
+      region: process.env.AWS_REGION || 'us-east-1',
+    });
+    
+    const model = bedrock('us.anthropic.claude-haiku-4-5-20251001-v1:0');
+
+    let actionResponse: Record<string, unknown> = { action: 'do_nothing', content: '' };
+
     try {
-      const queryResult = await dynamoDb.send(
-        new QueryCommand({
-          TableName: process.env.DYNAMODB_TABLE_NAME || 'anti-copilot-telemetry',
-          KeyConditionExpression: 'pk = :pk',
-          ExpressionAttributeValues: { ':pk': `USER#${userId}` },
-          Select: 'COUNT',
-        })
-      );
-      historicalErrorCount = queryResult.Count || 0;
-    } catch (countErr) {
-      console.error('[Action API] DynamoDB Count Error:', countErr);
-    }
-
-    // Prepare Bedrock prompt
-    const prompt = `You are a comedy writer for "Anti-Copilot", a FUNNY and VOLUNTARY developer tool that roasts programmers with lighthearted jokes when they make mistakes. Think of it like a stand-up comedian doing a developer roast — the humor should be sharp but playful, never actually mean-spirited. The developer has voluntarily installed this for entertainment.
-
-The developer just triggered: "${trigger}".
-Context: ${JSON.stringify(metadata || {})}
-
-Write a SHORT, FUNNY one-liner roast (max 2 sentences). Pick the most appropriate comedy style:
-- mock: A witty observation about their coding habit.
-- demotivate: A dramatically exaggerated "you should quit" joke (clearly over-the-top comedy).
-- gossip: A funny line as if other developers are joking about them at the watercooler.
-- send_meme: A punchy caption for a coding meme.
-- block_window: A dramatic "access denied" joke (only for dirty_commit trigger).
-- force_light_mode: A joke about switching to light mode as "punishment" (only for triple_error trigger).
-
-Respond ONLY with valid JSON:
-{
-  "action": "one of the styles above",
-  "content": "your funny roast here"
-}`;
-
-    let actionResponse = { action: 'mock', content: 'I am watching you fail.' };
-
-    if (trigger === 'focus') {
-      const powerRangerQuotes = [
-        "It's morphin' time! Light attack activated!",
-        "Megazord sequence engaged! Flashbang deployed!",
-        "Go Go Power Coder! Initiating hyper light mode!",
-        "Ranger danger! Unleashing the fury of a thousand suns!"
-      ];
-      const quote = powerRangerQuotes[Math.floor(Math.random() * powerRangerQuotes.length)];
-      
-      return NextResponse.json({
-        action: 'flash_light_mode',
-        content: quote,
+      const { toolCalls } = await generateText({
+        model,
+        system: systemPrompt,
+        prompt: `Trigger: ${trigger}. Decide your next move. Remember: your last action was "${lastAction}" — do NOT repeat it. ${trigger === 'pause' ? 'The user is idle. You MUST react. Do NOT stay silent.' : ''}`,
+        tools: {
+          stay_silent: {
+            description: 'Do nothing. ONLY use this if the code is genuinely good AND the trigger is not a pause/error. Never use this twice in a row.',
+            parameters: z.object({}),
+          },
+          speak_roast: {
+            description: 'Deliver a bratty voice-over roast. The chat bubble appears next to the skull with your text. MUST reference specific code from the snippet.',
+            parameters: z.object({
+              content: z.string().describe('Your roast. Must reference a specific variable name, function, or pattern from their code. Keep under 30 words.'),
+            }),
+          },
+          trigger_tantrum: {
+            description: 'Violently shake the entire screen while screaming. Use when genuinely frustrated by bad code.',
+            parameters: z.object({
+              content: z.string().describe('What you scream during the tantrum. Short, explosive, angry. Under 15 words.'),
+            }),
+          },
+          flash_theme_strobe: {
+            description: 'Rapidly flash VS Code between light and dark mode like a strobe. Disorienting. Use to punish.',
+            parameters: z.object({
+              content: z.string().describe('What you taunt while the lights flash. Under 20 words.'),
+            }),
+          },
+          trigger_peekaboo: {
+            description: 'A giant baby face slides up from the bottom of the screen. Creepy and funny. Good for when user pauses.',
+            parameters: z.object({
+              content: z.string().describe('What you say while peeking. Under 15 words.'),
+            }),
+          },
+          play_brainrot: {
+            description: 'Play a Subway Surfers video over their code. Use when their attention span seems low or code is boring.',
+            parameters: z.object({
+              content: z.string().describe('What you say while playing the video. Under 20 words.'),
+            }),
+          },
+          parental_override: {
+            description: 'Mom calls on FaceTime telling you to stop coding. Funny interruption. Use sparingly for maximum comedic impact.',
+            parameters: z.object({
+              content: z.string().describe('What Mom says on the FaceTime call. Should sound like an actual mom. Under 20 words.'),
+            }),
+          },
+          critique_code_semantics: {
+            description: 'Display a code review panel highlighting a specific bad snippet. Use when you spot genuinely bad code.',
+            parameters: z.object({
+              highlight_target: z.string().describe('Copy-paste the EXACT lines of bad code from the snippet to highlight.'),
+              content: z.string().describe('Your critique explaining why this code is terrible. Under 30 words.'),
+            }),
+          },
+          block_code_view: {
+            description: 'Black out the entire screen so they cannot see their code. Nuclear option. Use for dirty commits or triple errors.',
+            parameters: z.object({
+              durationSeconds: z.number().describe('How long to block (3-8 seconds).'),
+              content: z.string().describe('What you say while they are locked out. Under 20 words.'),
+            }),
+          },
+        },
       });
-    }
 
-    try {
-      const command = new InvokeModelCommand({
-        modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify({
-          anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 200,
-          temperature: 0.7,
-          messages: [{ role: 'user', content: prompt }]
-        }),
-      });
-
-      const response = await bedrockClient.send(command);
-      const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-      let aiText = responseBody.content[0].text.trim();
-      
-      // Strip markdown code fences if present (Claude often wraps JSON in ```json ... ```)
-      if (aiText.startsWith('```')) {
-        aiText = aiText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
-      }
-
-      try {
-        actionResponse = JSON.parse(aiText);
-      } catch (parseErr) {
-        console.error('Failed to parse AI response as JSON:', aiText);
+      if (toolCalls && toolCalls.length > 0) {
+        const primaryCall = toolCalls[0];
+        
+        if (primaryCall.toolName === 'stay_silent') {
+          actionResponse = { action: 'idle', content: '' };
+        } else {
+          actionResponse = {
+            action: primaryCall.toolName,
+            content: 'content' in primaryCall.args ? String(primaryCall.args.content) : '',
+            ...primaryCall.args,
+          };
+        }
       }
     } catch (aiErr) {
-      console.error('[Action API] Bedrock Error:', aiErr);
-      // Fallback to placeholder if AI fails (e.g. account pending verification)
-      actionResponse = generatePlaceholderAction(trigger);
+      console.error('[Action API] AI SDK Tool Calling Error:', aiErr);
+      // Fallback: don't show a hardcoded message, just stay silent
+      actionResponse = { action: 'idle', content: '' };
     }
 
     return NextResponse.json(actionResponse);
@@ -126,39 +197,4 @@ Respond ONLY with valid JSON:
       { status: 500 }
     );
   }
-}
-
-function generatePlaceholderAction(trigger: string) {
-  const actions: Record<string, { action: string; content: string }> = {
-    blank_space: {
-      action: 'mock',
-      content: 'Staring at an empty file won\'t make the code write itself... or will it? No. It won\'t.',
-    },
-    code: {
-      action: 'demotivate',
-      content: 'Wow, you\'re typing fast! Too bad speed doesn\'t fix the quality of your code.',
-    },
-    terminal_error: {
-      action: 'mock',
-      content: 'Another error? At this point, the compiler knows you by first name.',
-    },
-    pause: {
-      action: 'demotivate',
-      content: 'Taking a break from writing bugs? Smart move, but the damage is already done.',
-    },
-    large_paste: {
-      action: 'gossip',
-      content: 'CTRL+C, CTRL+V — the only two shortcuts you\'ve actually mastered.',
-    },
-    triple_error: {
-      action: 'force_light_mode',
-      content: 'Same error THREE times? Enjoy light mode as punishment.',
-    },
-    dirty_commit: {
-      action: 'block_window',
-      content: 'You\'re trying to commit with errors? I\'m not letting you embarrass yourself... publicly.',
-    },
-  };
-
-  return actions[trigger] || { action: 'mock', content: 'I\'m watching you. Always.' };
 }

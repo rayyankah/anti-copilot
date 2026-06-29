@@ -25,12 +25,4 @@ export enum ActionType {
   BlockWindow = 'block_window',
   ForceLightMode = 'force_light_mode',
   FlashLightMode = 'flash_light_mode',
-  SpeakRoast = 'speak_roast',
-  TriggerTantrum = 'trigger_tantrum',
-  FlashThemeStrobe = 'flash_theme_strobe',
-  TriggerPeekaboo = 'trigger_peekaboo',
-  PlayBrainrot = 'play_brainrot',
-  ParentalOverride = 'parental_override',
-  CritiqueCodeSemantics = 'critique_code_semantics',
-  BlockCodeView = 'block_code_view',
 }

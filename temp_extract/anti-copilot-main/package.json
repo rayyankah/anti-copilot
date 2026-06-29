@@ -9,7 +9,6 @@
     "vercel-brain"
   ],
   "scripts": {
-    "dev": "npm start",
     "start": "npm run dev --workspace=desktop-overlay",
     "dev:brain": "npm run dev --workspace=vercel-brain",
     "dev:overlay": "npm run dev --workspace=desktop-overlay",

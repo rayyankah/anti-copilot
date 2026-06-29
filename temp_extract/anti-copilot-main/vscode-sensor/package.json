@@ -1,0 +1,67 @@
+{
+  "name": "anti-copilot-sensor",
+  "displayName": "Anti-Copilot Sensor",
+  "description": "Silently monitors your coding habits and reports them to the Anti-Copilot engine",
+  "version": "0.1.0",
+  "publisher": "anti-copilot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rayyankah/anti-copilot.git"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antiCopilot.activate",
+        "title": "Anti-Copilot: Activate Sensor"
+      },
+      {
+        "command": "antiCopilot.deactivate",
+        "title": "Anti-Copilot: Deactivate Sensor"
+      }
+    ],
+    "configuration": {
+      "title": "Anti-Copilot",
+      "properties": {
+        "antiCopilot.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "The URL of the Anti-Copilot Vercel Brain API server"
+        },
+        "antiCopilot.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Anti-Copilot project root (for auto-launching the overlay app)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "lint": "eslint src/",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.100.0",
+    "@types/ws": "^8.18.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.0.0",
+    "typescript": "^5.8.0"
+  }
+}
