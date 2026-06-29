@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Space_Mono } from 'next/font/google';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+const spaceMono = Space_Mono({ subsets: ['latin'], weight: ['400', '700'] });
 
 export const metadata: Metadata = {
-  title: 'Anti-Copilot: Global Hall of Shame',
-  description: 'The live leaderboard of the worst developers, ranked by their most embarrassing, frequently repeated errors.',
+  title: 'ANTI-COPILOT OS :: HALL OF SHAME',
+  description: 'Global ranking of developers by their most embarrassing, frequently repeated errors. We are watching.',
 };
 
 export default function RootLayout({
@@ -15,8 +15,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className={inter.className}>{children}</body>
+    <html lang="en">
+      <body className={spaceMono.className}>{children}</body>
     </html>
   );
 }

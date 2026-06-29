@@ -4,10 +4,12 @@ import {
   AgentDecision,
   RobotState,
   AgentPayload,
+  UserReaction,
 } from '../../shared/types';
 import { BehaviorEngine } from './BehaviorEngine';
 import { PersonalityEngine } from './PersonalityEngine';
 import { MemorySystem } from './MemorySystem';
+import { ChaosPlanner } from './ChaosPlanner';
 import { BrainClient } from './BrainClient';
 import { OverlayBridge } from './OverlayBridge';
 
@@ -24,15 +26,32 @@ export class AgentRuntime {
   private behaviorEngine: BehaviorEngine;
   private personalityEngine: PersonalityEngine;
   private memorySystem: MemorySystem;
+  private chaosPlanner: ChaosPlanner;
   private brainClient: BrainClient;
   public overlayBridge: OverlayBridge;
 
   private isRunning = false;
   private loopInterval: NodeJS.Timeout | null = null;
-  private readonly TICK_MS = 500;           // Agent loop frequency
-  private readonly MIN_BRAIN_INTERVAL = 15_000; // Max 1 LLM call per 15s
+  private readonly TICK_MS = 500;
+  private readonly MIN_BRAIN_INTERVAL = 15_000;       // Min gap on a state change
+  private readonly MIN_FORCE_BRAIN_INTERVAL = 7_000;  // Shorter gate for big moments (success!)
+  private readonly MIN_SPONTANEOUS_INTERVAL = 45_000; // Min gap for pure-boredom self-starts
   private lastBrainCallTime = 0;
   private lastRobotStateUpdate = 0;
+
+  // Track recent content to suppress duplicate outputs
+  private recentContents: string[] = [];
+
+  // Timers for the scripted opening sequence (mess → discourage)
+  private introTimers: NodeJS.Timeout[] = [];
+
+  // Forwards VS Code-side attacks (theme/font) back to the sensor; wired by main
+  private sensorSender: ((msg: Record<string, unknown>) => void) | null = null;
+
+  // Actions that must be executed inside VS Code (not just the overlay)
+  private readonly SENSOR_ACTIONS = new Set([
+    'flash_theme_strobe', 'force_light_mode', 'flash_light_mode', 'font_attack',
+  ]);
 
   // Code context cache (updated via WS messages from sensor)
   private cachedCodeContext = {
@@ -54,6 +73,7 @@ export class AgentRuntime {
     this.behaviorEngine = new BehaviorEngine();
     this.personalityEngine = new PersonalityEngine();
     this.memorySystem = new MemorySystem();
+    this.chaosPlanner = new ChaosPlanner();
     this.brainClient = new BrainClient(brainPort);
     this.overlayBridge = new OverlayBridge();
     this.logFn = logFn || ((source, level, msg) => console.log(`[${source}] ${msg}`));
@@ -70,9 +90,68 @@ export class AgentRuntime {
   start(): void {
     if (this.isRunning) return;
     this.isRunning = true;
-    this.logFn('agent', 'info', 'Agent runtime started — OBSERVE→UNDERSTAND→PLAN→ACT→VERIFY→LEARN');
+    this.logFn('agent', 'info', 'Gremlin runtime started — OBSERVE→JUDGE→SCORE CHAOS→STRIKE→REMEMBER');
+
+    // Load this developer's persisted relationship so the gremlin remembers
+    // them across sessions (escalation, fears, past defeats). Fire and forget.
+    if (this.userId) {
+      this.brainClient.loadProfile(this.userId).then((profile) => {
+        if (profile) {
+          this.memorySystem.seedRelationship(profile);
+          this.logFn('agent', 'info',
+            `Relationship loaded: escalation=${profile.escalationLevel ?? 1}, ` +
+            `fears=[${(profile.fears ?? []).join(', ')}], defeats=${profile.triumphsWitnessed ?? 0}`
+          );
+        }
+      }).catch(() => { /* first session / brain not ready — start fresh */ });
+    }
 
     this.loopInterval = setInterval(() => this.tick(), this.TICK_MS);
+    this.runIntroSequence();
+  }
+
+  /**
+   * Lets main.ts wire a channel for sending VS Code-side attacks (theme/font)
+   * back to the sensor extension.
+   */
+  setSensorSender(sender: (msg: Record<string, unknown>) => void): void {
+    this.sensorSender = sender;
+  }
+
+  /**
+   * The scripted opening: the gremlin doesn't wait. For the first few seconds it
+   * messes with the user and their visuals; around 10s it actively tries to
+   * discourage them from coding at all.
+   */
+  private runIntroSequence(): void {
+    // ~3s: first contact — a taunt + flicker their font
+    this.introTimers.push(setTimeout(() => {
+      this.forwardSensorAttack('font_attack');
+      this.strikeBrain('intro_mischief');
+    }, 3000));
+
+    // ~6s: mess with the visuals — flash the theme
+    this.introTimers.push(setTimeout(() => {
+      this.forwardSensorAttack('flash_theme_strobe');
+      this.overlayBridge.dispatchAction({
+        action: 'flash_theme_strobe', content: '',
+        avatarEmotion: 'gleeful', confidence: 0.8,
+        reasoning: 'intro visual chaos', persona: 'gremlin',
+      });
+    }, 6000));
+
+    // ~11s: actively discourage them from starting
+    this.introTimers.push(setTimeout(() => {
+      this.strikeBrain('discourage');
+    }, 11000));
+  }
+
+  /** Send a VS Code-side attack (theme/font) to the sensor extension. */
+  private forwardSensorAttack(action: string): void {
+    if (this.sensorSender) {
+      this.sensorSender({ type: 'action', action });
+      this.logFn('agent', 'info', `Sensor attack → ${action}`);
+    }
   }
 
   /**
@@ -84,7 +163,9 @@ export class AgentRuntime {
       clearInterval(this.loopInterval);
       this.loopInterval = null;
     }
-    this.logFn('agent', 'info', 'Agent runtime stopped');
+    this.introTimers.forEach(clearTimeout);
+    this.introTimers = [];
+    this.logFn('agent', 'info', 'Gremlin runtime stopped');
   }
 
   /**
@@ -92,6 +173,21 @@ export class AgentRuntime {
    */
   ingestTelemetry(frame: TelemetryFrame): void {
     this.behaviorEngine.ingest(frame);
+  }
+
+  /**
+   * The user fought back against an attack (Shut Up / You're Right / etc.).
+   * The gremlin remembers, escalates, and reacts immediately.
+   */
+  handleUserReaction(reaction: UserReaction): void {
+    this.personalityEngine.recordUserReaction(reaction);
+    this.memorySystem.recordUserReaction(reaction);
+    this.logFn('agent', 'info', `User fought back: ${reaction}`);
+
+    // The clap-back is generated by the brain (no canned lines). The reaction is
+    // already in relationship.lastReaction, so the prompt reacts in-character.
+    this.lastBrainCallTime = Date.now(); // reset gate so the reply lands quickly
+    void this.strikeBrain('fight_back');
   }
 
   /**
@@ -138,87 +234,128 @@ export class AgentRuntime {
         this.overlayBridge.updateRobotState(robotState);
       }
 
-      // ──── Should we ACT? ────
+      // ──── DECIDE — score the opportunity (Chaos Planner) ────
+      const opportunity = this.chaosPlanner.evaluate(behavioralState, personality, snapshot);
       const hasInflection = this.behaviorEngine.hasInflection();
-      const wantsSpontaneous = this.personalityEngine.wantsSpontaneousAction();
-      const canCallBrain = (now - this.lastBrainCallTime) > this.MIN_BRAIN_INTERVAL;
 
-      if (!canCallBrain) return; // Rate-limit brain calls
+      if (!opportunity.shouldStrike && !hasInflection) return;
 
-      if (!hasInflection && !wantsSpontaneous) return; // Nothing to do
+      // Pick the rate gate: big moments react fast, state changes medium, pure
+      // boredom self-starts slowest. EVERY reaction comes from the brain now —
+      // there are no canned local lines.
+      let gate = this.MIN_SPONTANEOUS_INTERVAL;
+      if (opportunity.forceBrain) gate = this.MIN_FORCE_BRAIN_INTERVAL;
+      else if (hasInflection) gate = this.MIN_BRAIN_INTERVAL;
+      if ((now - this.lastBrainCallTime) < gate) return;
 
-      // ──── PLAN (call the brain) ────
-      this.lastBrainCallTime = now;
-      const memory = this.memorySystem.getContextForBrain();
-
-      const payload: AgentPayload = {
-        userId: this.userId,
-        username: this.username,
-        behavioralState,
-        personalityState: personality,
-        telemetrySnapshot: {
-          avgKST: snapshot.avgKST,
-          errorDelta: snapshot.errorDelta,
-          stagnationSeconds: snapshot.stagnationSeconds,
-          wpm: snapshot.wpm,
-        },
-        codeContext: this.cachedCodeContext,
-        diagnostics: this.cachedDiagnostics,
-        memory,
-      };
-
-      this.logFn('agent', 'info',
-        `Inflection detected: state=${behavioralState}, ` +
-        `spontaneous=${wantsSpontaneous}, WPM=${snapshot.wpm}, ` +
-        `errors=${snapshot.errorCount}`
-      );
-
-      const decision = await this.brainClient.evaluate(payload);
-
-      // ──── ACT ────
-      if (decision.action === 'stay_silent') {
-        this.memorySystem.recordDecision(decision);
-        return;
-      }
-
-      this.logFn('agent', 'info', `Acting: ${decision.action} — "${decision.content?.substring(0, 60)}"`);
-
-      // Record in memory
-      this.memorySystem.recordDecision(decision);
-      this.personalityEngine.recordInteraction();
-
-      // Dispatch to overlay
-      this.overlayBridge.dispatchAction(decision);
-
-      // Handle blocking actions
-      if (decision.action === 'block_code_view') {
-        this.overlayBridge.blockMouseFor(8000);
-      }
-
-      // ──── VERIFY (after 10 seconds) ────
-      const priorState = behavioralState;
-      setTimeout(() => {
-        const postState = this.behaviorEngine.classifyState();
-        const outcome = this.assessOutcome(priorState, postState, decision);
-
-        // ──── LEARN ────
-        this.memorySystem.recordOutcome({
-          decision,
-          priorState,
-          postState,
-          personalitySnapshot: this.personalityEngine.getState(),
-          outcome,
-          timestamp: Date.now(),
-        });
-
-        this.logFn('agent', 'info',
-          `Outcome: ${outcome} (${priorState} → ${postState})`
-        );
-      }, 10_000);
-
+      await this.strikeBrain(opportunity.trigger, opportunity.score);
     } catch (err) {
       this.logFn('agent', 'error', `Tick error: ${err}`);
     }
+  }
+
+  /**
+   * Build a payload from the CURRENT state, call the brain, and apply the result.
+   * `triggerOverride` lets scripted moments (intro, discourage, fight-back) tell
+   * the gremlin why it's acting.
+   */
+  private async strikeBrain(triggerOverride?: string, scoreOverride?: number): Promise<void> {
+    const snapshot = this.behaviorEngine.getSnapshot();
+    const behavioralState = this.behaviorEngine.classifyState();
+    const personality = this.personalityEngine.getState();
+    const opp = this.chaosPlanner.evaluate(behavioralState, personality, snapshot);
+    const trigger = triggerOverride ?? opp.trigger;
+    const score = scoreOverride ?? opp.score;
+
+    this.lastBrainCallTime = Date.now();
+
+    const memory = this.memorySystem.getContextForBrain();
+    const rel = this.memorySystem.getRelationship();
+
+    const payload: AgentPayload = {
+      userId: this.userId,
+      username: this.username,
+      behavioralState,
+      personalityState: personality,
+      telemetrySnapshot: {
+        avgKST: snapshot.avgKST,
+        errorDelta: snapshot.errorDelta,
+        stagnationSeconds: snapshot.stagnationSeconds,
+        wpm: snapshot.wpm,
+      },
+      codeContext: this.cachedCodeContext,
+      diagnostics: this.cachedDiagnostics,
+      memory,
+      relationship: {
+        escalationLevel: rel.escalationLevel,
+        favoriteAttack: rel.favoriteAttack,
+        fears: rel.fears,
+        triumphsWitnessed: rel.triumphsWitnessed,
+        lastReaction: this.memorySystem.getLastReaction(),
+      },
+      opportunity: { score, trigger },
+    };
+
+    this.logFn('agent', 'info',
+      `STRIKE: state=${behavioralState}, trigger=${trigger}, chaos=${score}, ` +
+      `WPM=${snapshot.wpm}, errors=${snapshot.errorCount}`
+    );
+
+    const decision = await this.brainClient.evaluate(payload);
+    this.applyDecision(decision, behavioralState);
+  }
+
+  /**
+   * Dedup, record, render, forward VS Code-side attacks, and schedule learning.
+   */
+  private applyDecision(decision: AgentDecision, priorState: BehavioralState): void {
+    if (decision.action === 'stay_silent') {
+      this.memorySystem.recordDecision(decision);
+      return;
+    }
+
+    // Content deduplication — suppress near-identical repeats
+    if (decision.content) {
+      const normalized = decision.content.toLowerCase().trim().slice(0, 80);
+      if (this.recentContents.includes(normalized)) {
+        this.logFn('agent', 'warn', `Suppressed duplicate: "${decision.content.slice(0, 60)}"`);
+        return;
+      }
+      this.recentContents.push(normalized);
+      if (this.recentContents.length > 6) this.recentContents.shift();
+    }
+
+    this.logFn('agent', 'info', `Acting: ${decision.action} — "${decision.content?.substring(0, 60)}"`);
+
+    this.memorySystem.recordDecision(decision);
+    this.personalityEngine.recordInteraction();
+
+    // Render in the overlay
+    this.overlayBridge.dispatchAction(decision);
+
+    // Forward theme/font attacks to the VS Code sensor so they actually happen
+    if (this.SENSOR_ACTIONS.has(decision.action)) {
+      this.forwardSensorAttack(decision.action);
+    }
+
+    if (decision.action === 'block_code_view') {
+      this.overlayBridge.blockMouseFor(8000);
+    }
+
+    // ──── VERIFY + LEARN (after 10s) ────
+    setTimeout(() => {
+      const postState = this.behaviorEngine.classifyState();
+      const outcome = this.assessOutcome(priorState, postState, decision);
+      this.memorySystem.recordOutcome({
+        decision,
+        priorState,
+        postState,
+        personalitySnapshot: this.personalityEngine.getState(),
+        outcome,
+        timestamp: Date.now(),
+      });
+      this.logFn('agent', 'info', `Outcome: ${outcome} (${priorState} → ${postState})`);
+    }, 10_000);
   }
 
   /**

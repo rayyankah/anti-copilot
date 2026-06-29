@@ -3,19 +3,44 @@
 import { useEffect, useState } from 'react';
 import { LeaderboardEntry } from '@/lib/types';
 
+const SHAME_BAR_MAX = 1000;
+
+function ShameBar({ score }: { score: number }) {
+  const pct = Math.min(100, (score / SHAME_BAR_MAX) * 100);
+  return (
+    <div style={{
+      width: '100%',
+      height: '6px',
+      background: 'rgba(255, 51, 85, 0.1)',
+      border: '1px solid rgba(255, 51, 85, 0.25)',
+      marginTop: '8px',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        width: `${pct}%`,
+        height: '100%',
+        background: 'var(--red)',
+        boxShadow: 'var(--glow-red)',
+        transition: 'width 0.4s ease',
+      }} />
+    </div>
+  );
+}
+
+const RANK_LABELS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'];
+
 export default function HomePage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
 
   const fetchLeaderboard = async () => {
     try {
       const res = await fetch('/api/leaderboard');
       const data = await res.json();
-      if (data.leaderboard) {
-        setLeaderboard(data.leaderboard);
-      }
-    } catch (err) {
-      console.error('Failed to fetch leaderboard', err);
+      if (data.leaderboard) setLeaderboard(data.leaderboard);
+    } catch {
+      /* silent */
     } finally {
       setLoading(false);
     }
@@ -23,53 +48,301 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchLeaderboard();
-    const interval = setInterval(fetchLeaderboard, 5000); // Poll every 5s
-    return () => clearInterval(interval);
+    const poll = setInterval(fetchLeaderboard, 5000);
+    const blink = setInterval(() => setTick(t => t + 1), 800);
+    return () => { clearInterval(poll); clearInterval(blink); };
   }, []);
 
-  return (
-    <main style={{ minHeight: '100vh', padding: '4rem 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <h1 style={{ fontSize: '3rem', fontWeight: 800, background: 'linear-gradient(135deg, #ff2d2d, #ff6b00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: '1rem' }}>
-        🏆 Global Hall of Shame
-      </h1>
-      <p style={{ color: '#888', fontSize: '1.2rem', maxWidth: '600px', textAlign: 'center', marginBottom: '3rem' }}>
-        The live leaderboard of the worst developers using Anti-Copilot, ranked by their most embarrassing, frequently repeated errors.
-      </p>
+  const cursor = tick % 2 === 0 ? '█' : ' ';
 
-      {loading && leaderboard.length === 0 ? (
-        <p>Loading the shame...</p>
-      ) : leaderboard.length === 0 ? (
-        <p style={{ color: '#555' }}>No victims yet. The code is surprisingly bug-free... for now.</p>
-      ) : (
-        <div style={{ width: '100%', maxWidth: '800px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {leaderboard.map((user, index) => (
-            <div key={user.userId} style={{ 
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', 
-              padding: '1.5rem', background: 'var(--bg-card)', 
-              borderRadius: '12px', border: '1px solid var(--border-color)',
-              boxShadow: index === 0 ? '0 0 20px var(--accent-red-glow)' : 'none',
-              transform: index === 0 ? 'scale(1.02)' : 'none',
-              transition: 'all 0.3s ease'
+  return (
+    <main style={{
+      minHeight: '100vh',
+      padding: '0',
+      display: 'flex',
+      flexDirection: 'column',
+      fontFamily: "'Space Mono', 'Courier New', monospace",
+    }}>
+
+      {/* ── Header bar ── */}
+      <div style={{
+        borderBottom: '1px solid var(--green-dim)',
+        padding: '10px 32px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        background: 'var(--green-ghost)',
+      }}>
+        <span style={{
+          fontFamily: "'Press Start 2P', monospace",
+          fontSize: '9px',
+          color: 'var(--green)',
+          letterSpacing: '1px',
+          textShadow: 'var(--glow-green)',
+        }}>
+          ANTI-COPILOT OS v0.2.0
+        </span>
+        <span style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '14px',
+          color: 'var(--green-dim)',
+          letterSpacing: '2px',
+        }}>
+          {new Date().toLocaleTimeString()} {cursor}
+        </span>
+      </div>
+
+      {/* ── Main content ── */}
+      <div style={{
+        flex: 1,
+        padding: '40px 32px',
+        maxWidth: '900px',
+        margin: '0 auto',
+        width: '100%',
+      }}>
+
+        {/* ── ASCII header ── */}
+        <div style={{ marginBottom: '40px' }}>
+          <pre style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '13px',
+            color: 'var(--green)',
+            opacity: 0.35,
+            lineHeight: '1.15',
+            letterSpacing: '1px',
+            textShadow: 'var(--glow-green)',
+            marginBottom: '20px',
+            overflow: 'hidden',
+          }}>{`╔══════════════════════════════════════════════════════╗
+║  ██╗  ██╗ █████╗ ██╗     ██╗          ██████╗ ███████╗ ║
+║  ██║  ██║██╔══██╗██║     ██║         ██╔═══██╗██╔════╝ ║
+║  ███████║███████║██║     ██║         ██║   ██║█████╗   ║
+║  ██╔══██║██╔══██║██║     ██║         ██║   ██║██╔══╝   ║
+║  ██║  ██║██║  ██║███████╗███████╗    ╚██████╔╝██║      ║
+║  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝    ╚═════╝ ╚═╝      ║
+║                  SHAME                                  ║
+╚══════════════════════════════════════════════════════╝`}</pre>
+
+          <div style={{
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: '11px',
+            color: 'var(--red)',
+            textShadow: 'var(--glow-red)',
+            letterSpacing: '2px',
+            marginBottom: '6px',
+          }}>
+            GLOBAL HALL OF SHAME
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '16px',
+            color: 'var(--green-dim)',
+            letterSpacing: '1px',
+          }}>
+            {'>> DEVELOPERS RANKED BY FAILURE INDEX. LIVE. UPDATED EVERY 5s.'}
+          </div>
+        </div>
+
+        {/* ── System status panel ── */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr 1fr',
+          gap: '12px',
+          marginBottom: '36px',
+        }}>
+          {[
+            { label: 'AGENT STATUS',   value: 'WATCHING',        color: 'var(--green)', glow: 'var(--glow-green)' },
+            { label: 'VICTIMS RANKED', value: String(leaderboard.length || '--'), color: 'var(--blue)',  glow: 'var(--glow-blue)' },
+            { label: 'SHAME PROTOCOL', value: 'ACTIVE',          color: 'var(--red)',   glow: 'var(--glow-red)' },
+          ].map(s => (
+            <div key={s.label} style={{
+              background: 'var(--panel-dark)',
+              border: `1px solid rgba(57, 255, 136, 0.12)`,
+              padding: '12px 16px',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                <div style={{ fontSize: '2rem', fontWeight: 'bold', color: index === 0 ? '#ff2d2d' : '#888', width: '30px' }}>
-                  #{index + 1}
-                </div>
-                <div>
-                  <h2 style={{ fontSize: '1.2rem', marginBottom: '0.2rem' }}>{user.displayName}</h2>
-                  <p style={{ color: '#888', fontSize: '0.9rem' }}>
-                    Most common fail: <span style={{ color: '#ff6b00' }}>{user.topError}</span> ({user.topErrorCount} times)
-                  </p>
-                </div>
+              <div style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '7px',
+                color: 'var(--muted)',
+                letterSpacing: '1px',
+                marginBottom: '8px',
+              }}>
+                {s.label}
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#ff2d2d' }}>{user.shameScore}</div>
-                <div style={{ fontSize: '0.8rem', color: '#555' }}>Shame Score</div>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '22px',
+                color: s.color,
+                textShadow: s.glow,
+                letterSpacing: '2px',
+              }}>
+                {s.value}
               </div>
             </div>
           ))}
         </div>
-      )}
+
+        {/* ── Leaderboard ── */}
+        <div style={{
+          border: '1px solid var(--red-dim)',
+          boxShadow: 'var(--glow-red)',
+        }}>
+          {/* Table header */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '44px 1fr 1fr 100px',
+            gap: '0',
+            padding: '8px 16px',
+            background: 'var(--red-ghost)',
+            borderBottom: '1px solid var(--red-dim)',
+          }}>
+            {['RNK', 'DEVELOPER', 'MOST REPEATED FAILURE', 'SHAME'].map(h => (
+              <div key={h} style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '7px',
+                color: 'var(--red)',
+                letterSpacing: '1px',
+                textShadow: 'var(--glow-red)',
+              }}>
+                {h}
+              </div>
+            ))}
+          </div>
+
+          {loading && leaderboard.length === 0 ? (
+            <div style={{
+              padding: '48px 16px',
+              textAlign: 'center',
+              fontFamily: "'VT323', monospace",
+              fontSize: '20px',
+              color: 'var(--green-dim)',
+              letterSpacing: '2px',
+            }}>
+              {'>> SCANNING FOR SHAME... '}
+              <span style={{ color: 'var(--green)', textShadow: 'var(--glow-green)' }}>{cursor}</span>
+            </div>
+          ) : leaderboard.length === 0 ? (
+            <div style={{
+              padding: '48px 16px',
+              textAlign: 'center',
+              fontFamily: "'VT323', monospace",
+              fontSize: '20px',
+              color: 'var(--muted)',
+              letterSpacing: '2px',
+            }}>
+              {'>> NO VICTIMS YET. THE CODE IS SUSPICIOUSLY BUG-FREE.'}
+            </div>
+          ) : (
+            leaderboard.map((user, i) => (
+              <div key={user.userId} style={{
+                display: 'grid',
+                gridTemplateColumns: '44px 1fr 1fr 100px',
+                gap: '0',
+                padding: '14px 16px',
+                borderBottom: i < leaderboard.length - 1 ? '1px solid rgba(255, 51, 85, 0.08)' : 'none',
+                background: i === 0 ? 'rgba(255, 51, 85, 0.05)' : 'transparent',
+                alignItems: 'start',
+                transition: 'background 0.2s',
+              }}>
+                {/* Rank */}
+                <div style={{
+                  fontFamily: "'Press Start 2P', monospace",
+                  fontSize: '10px',
+                  color: i === 0 ? 'var(--red)' : 'var(--muted)',
+                  textShadow: i === 0 ? 'var(--glow-red)' : 'none',
+                  paddingTop: '2px',
+                }}>
+                  #{RANK_LABELS[i] ?? String(i + 1).padStart(2, '0')}
+                </div>
+
+                {/* Developer name */}
+                <div>
+                  <div style={{
+                    fontFamily: "'Space Mono', monospace",
+                    fontSize: '14px',
+                    color: i === 0 ? 'var(--green)' : 'rgba(57, 255, 136, 0.8)',
+                    textShadow: i === 0 ? 'var(--glow-green)' : 'none',
+                    letterSpacing: '0.5px',
+                    marginBottom: '4px',
+                  }}>
+                    {user.displayName}
+                  </div>
+                  {i === 0 && (
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '12px',
+                      color: 'var(--red)',
+                      letterSpacing: '1px',
+                      textShadow: 'var(--glow-red)',
+                    }}>
+                      {'[WORST DEVELOPER ONLINE]'}
+                    </div>
+                  )}
+                </div>
+
+                {/* Error */}
+                <div>
+                  <div style={{
+                    fontFamily: "'Space Mono', monospace",
+                    fontSize: '11px',
+                    color: 'var(--red)',
+                    textShadow: 'var(--glow-red)',
+                    wordBreak: 'break-word',
+                    lineHeight: '1.5',
+                  }}>
+                    {user.topError}
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '14px',
+                    color: 'var(--muted)',
+                    marginTop: '2px',
+                  }}>
+                    {user.topErrorCount}× repeated
+                  </div>
+                  <ShameBar score={user.shameScore} />
+                </div>
+
+                {/* Score */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{
+                    fontFamily: "'Press Start 2P', monospace",
+                    fontSize: '14px',
+                    color: i === 0 ? 'var(--red)' : 'rgba(255, 51, 85, 0.7)',
+                    textShadow: i === 0 ? 'var(--glow-red)' : 'none',
+                  }}>
+                    {user.shameScore}
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '12px',
+                    color: 'var(--muted)',
+                    marginTop: '3px',
+                  }}>
+                    pts
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={{
+          marginTop: '32px',
+          fontFamily: "'VT323', monospace",
+          fontSize: '14px',
+          color: 'var(--muted)',
+          letterSpacing: '1px',
+          borderTop: '1px solid rgba(57, 255, 136, 0.08)',
+          paddingTop: '16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+        }}>
+          <span>{'>> ANTI-COPILOT IS WATCHING. IT ALWAYS IS.'}</span>
+          <span style={{ color: 'var(--green-dim)' }}>LIVE {cursor}</span>
+        </div>
+      </div>
     </main>
   );
 }

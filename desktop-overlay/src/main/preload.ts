@@ -19,4 +19,9 @@ contextBridge.exposeInMainWorld('antiCopilot', {
   onAgentAction: (callback: (action: any) => void) => {
     ipcRenderer.on('agent-action', (_event, action) => callback(action));
   },
+
+  // ─── Fight-back: user reacts to an attack ───
+  sendUserReaction: (reaction: string) => {
+    ipcRenderer.send('user-reaction', reaction);
+  },
 });

@@ -178,8 +178,8 @@ Pick ONE tool. Make it count.`;
         } else {
           actionResponse = {
             action: primaryCall.toolName,
-            content: 'content' in primaryCall.args ? String(primaryCall.args.content) : '',
             ...primaryCall.args,
+            content: 'content' in primaryCall.args ? String(primaryCall.args.content) : '',
           };
         }
       }

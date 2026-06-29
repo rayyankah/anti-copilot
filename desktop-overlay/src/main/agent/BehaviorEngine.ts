@@ -11,7 +11,7 @@ export class BehaviorEngine {
   private buffer: TelemetryFrame[] = [];
   private readonly WINDOW_MS = 10_000; // 10-second rolling window
   private lastInflectionTime = 0;
-  private readonly MIN_INFLECTION_GAP_MS = 5_000; // Don't fire more than once per 5s
+  private readonly MIN_INFLECTION_GAP_MS = 12_000; // Don't fire more than once per 12s
   private previousState: BehavioralState = BehavioralState.Normal;
 
   /**
@@ -84,10 +84,13 @@ export class BehaviorEngine {
 
   /**
    * Classify the current behavioral state based on the rolling buffer.
+   * Triumph is checked FIRST — the user succeeding is the single most
+   * important (and most distressing) event for the gremlin.
    */
   classifyState(): BehavioralState {
     const snapshot = this.getSnapshot();
 
+    if (this.detectTriumph(snapshot)) return BehavioralState.Triumphant;
     if (this.detectFrustration(snapshot)) return BehavioralState.Frustrated;
     if (this.detectCopyPasteStagnation(snapshot)) return BehavioralState.Clueless;
     if (this.detectBlindRager(snapshot)) return BehavioralState.Manic;
@@ -119,6 +122,15 @@ export class BehaviorEngine {
   }
 
   // ─── Inflection Detectors ───
+
+  /**
+   * Triumph (SUCCESS):
+   * Errors that were present in the window have dropped to zero — the user
+   * fixed their bugs or their code ran clean. The gremlin HATES this.
+   */
+  private detectTriumph(s: BehaviorSnapshot): boolean {
+    return s.errorCount === 0 && s.errorDelta < 0 && s.frameCount >= 2;
+  }
 
   /**
    * Frustration Spike:
@@ -181,10 +193,12 @@ export class BehaviorEngine {
 
   /**
    * Stagnation:
-   * Zero typing for > 6 seconds while errors are present.
+   * Zero typing for > 20 seconds while errors are present.
+   * 20s threshold avoids false positives from window-switching, thinking pauses,
+   * or the user writing in another app (e.g. chat, docs) while VS Code has errors.
    */
   private detectStagnation(s: BehaviorSnapshot): boolean {
-    return s.stagnationSeconds > 6 && s.errorCount > 0;
+    return s.stagnationSeconds > 20 && s.errorCount > 0;
   }
 
   /**

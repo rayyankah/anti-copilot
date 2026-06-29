@@ -30,6 +30,8 @@ interface RobotState {
     confidence: number;
     attachment: number;
     energy: number;
+    chaos: number;
+    annoyance: number;
   };
   avatarEmotion: string;
   isIdle: boolean;
@@ -43,6 +45,8 @@ declare global {
       setClickThrough: (enabled: boolean) => void;
       onRobotStateUpdate: (callback: (state: RobotState) => void) => void;
       onAgentAction: (callback: (action: any) => void) => void;
+      onDebug: (callback: (log: any) => void) => void;
+      sendUserReaction: (reaction: string) => void;
     };
   }
 }
@@ -64,7 +68,17 @@ const ROBOT_FACES: Record<string, string> = {
   angry:      '[  ◉ ╭╮ ◉ ]',
   threatened: '[  ◉ △ ◉  ]',
   curious:    '[  ◉ ○ ◉  ]',
+  sad:        '[  ◔ ︵ ◔  ]',
+  devastated: '[  ╥ ﹏ ╥  ]',
 };
+
+// ─── Fight-back reaction buttons ───
+const FIGHTBACK_BUTTONS: { reaction: string; label: string }[] = [
+  { reaction: 'shut_up',     label: 'SHUT UP' },
+  { reaction: 'youre_right', label: "YOU'RE RIGHT" },
+  { reaction: 'apologize',   label: 'SORRY' },
+  { reaction: 'destroy',     label: '☠ DESTROY' },
+];
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -74,19 +88,23 @@ export default function App() {
   const [isExiting, setIsExiting] = useState(false);
   const [robotState, setRobotState] = useState<RobotState>({
     behavioralState: 'normal',
-    personality: { mood: 0.3, curiosity: 0.5, boredom: 0, confidence: 0.7, attachment: 0.2, energy: 0.8 },
+    personality: { mood: 0.4, curiosity: 0.5, boredom: 0.2, confidence: 0.8, attachment: 0.2, energy: 0.8, chaos: 0.5, annoyance: 0.3 },
     avatarEmotion: 'neutral',
     isIdle: true,
   });
   const [robotBlink, setRobotBlink] = useState(false);
+  const [isPinned, setIsPinned] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staggerTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const chatboxRef = useRef<HTMLDivElement>(null);
+  // When pinned, the bubble stops following the cursor so its buttons are clickable
+  const pinnedRef = useRef(false);
 
   // ─── Cursor tracking ───
   useEffect(() => {
     if (window.antiCopilot?.onCursorUpdate) {
       window.antiCopilot.onCursorUpdate((_event: any, { x, y }: { x: number, y: number }) => {
+        if (pinnedRef.current) return; // frozen so the user can click the buttons
         if (chatboxRef.current) {
           chatboxRef.current.style.transform = `translate3d(${x + 15}px, ${y + 15}px, 0)`;
         }
@@ -121,18 +139,30 @@ export default function App() {
     staggerTimersRef.current = [];
   }, []);
 
-  const scheduleHide = useCallback((durationMs: number) => {
-    hideTimerRef.current = setTimeout(() => {
-      setIsExiting(true);
-      setTimeout(() => {
-        setUiState('idle');
-        setMessages([]);
-        setVideoUrl('');
-        setIsExiting(false);
-        silenceAll();
-      }, 400);
-    }, durationMs);
+  // Run the exit transition and reset to idle. Pin is released here.
+  const beginExit = useCallback(() => {
+    setIsExiting(true);
+    pinnedRef.current = false;
+    setIsPinned(false);
+    setTimeout(() => {
+      setUiState('idle');
+      setMessages([]);
+      setVideoUrl('');
+      setIsExiting(false);
+      // Don't call silenceAll() here — let speech finish naturally.
+      // It gets cancelled by the next trigger's clearAllTimers()+silenceAll().
+    }, 400);
   }, []);
+
+  const scheduleHide = useCallback((durationMs: number) => {
+    hideTimerRef.current = setTimeout(beginExit, durationMs);
+  }, [beginExit]);
+
+  // Estimate how long speech will take (fallback safety net only).
+  const estimateSpeechMs = (text: string): number => {
+    const words = (text || '').split(/\s+/).filter(Boolean).length;
+    return Math.max(8000, Math.ceil((words / 2.5) * 1000) + 3000);
+  };
 
   // ─── Main trigger listener ───
   useEffect(() => {
@@ -151,9 +181,36 @@ export default function App() {
       setCurrentAction(trigger);
       setUiState(action);
 
-      const speakAndRender = (fullText: string, sender: string, tone?: EmotionTone, append: boolean = false) => {
-        const utterance = speakWithEmotion(fullText, action);
-        
+      // Pinned bubbles stop following the cursor — so fight-back buttons are
+      // clickable, and panels don't chase the mouse around the screen.
+      const shouldPin = ['speak_roast', 'mock', 'demotivate', 'fake_rewrite'].includes(action);
+      pinnedRef.current = shouldPin;
+      setIsPinned(shouldPin);
+      if (shouldPin && chatboxRef.current) {
+        chatboxRef.current.style.transform = ''; // let the CSS .pinned anchor take over
+      }
+
+      const speakAndRender = (
+        fullText: string,
+        sender: string,
+        tone?: EmotionTone,
+        append: boolean = false,
+        onDone?: () => void,
+      ) => {
+        const utterance = speakWithEmotion(fullText);
+
+        // Fire onDone exactly once — whichever happens first: speech ends, or
+        // the safety timer elapses (covers muted/voiceless environments).
+        let doneFired = false;
+        const fireDone = () => {
+          if (doneFired || !onDone) return;
+          doneFired = true;
+          onDone();
+        };
+        if (onDone) {
+          setTimeout(fireDone, estimateSpeechMs(fullText) + 4000);
+        }
+
         setMessages(prev => {
           const newMsg = { text: '', sender, tone };
           return append ? [...prev, newMsg] : [newMsg];
@@ -192,6 +249,8 @@ export default function App() {
             newMsgs[newMsgs.length - 1].text = fullText;
             return newMsgs;
           });
+          // Let the last words linger on screen, THEN dismiss — never mid-sentence.
+          setTimeout(fireDone, 1500);
         };
       };
 
@@ -199,8 +258,7 @@ export default function App() {
         case 'mock':
         case 'demotivate': {
           const tone: EmotionTone = (payload?.wpm && payload.wpm > 100) ? 'threatened' : 'mocking';
-          speakAndRender(content || '', 'Anti-Copilot', tone);
-          scheduleHide(6000);
+          speakAndRender(content || '', 'Anti-Copilot', tone, false, beginExit);
           break;
         }
 
@@ -223,33 +281,36 @@ export default function App() {
         case 'play_video': {
           const videoId = payload?.videoId || 'dQw4w9WgXcQ';
           setVideoUrl(`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0`);
-          speakWithEmotion("Watch this. Maybe you'll learn something.", 'pause');
+          speakWithEmotion("Watch this. Maybe you'll learn something.");
           scheduleHide(15000);
           break;
         }
 
         case 'block_window': {
-          speakWithEmotion('Step away from the editor.', 'terminal_error');
+          speakWithEmotion('Step away from the editor.');
           scheduleHide(8000);
           break;
         }
 
         case 'send_meme': {
-          speakAndRender(content || 'This is you right now.', 'Anti-Copilot', 'mocking');
-          scheduleHide(8000);
+          speakAndRender(content || 'This is you right now.', 'Anti-Copilot', 'mocking', false, beginExit);
           break;
         }
 
         case 'force_light_mode':
         case 'flash_light_mode': {
-          speakAndRender(content || 'Enjoy the sunlight.', 'The Prodigy', 'mocking');
-          scheduleHide(6000);
+          speakAndRender(content || 'Enjoy the sunlight.', 'The Prodigy', 'mocking', false, beginExit);
           break;
         }
 
         case 'speak_roast': {
-          speakAndRender(content || '', 'The Prodigy', 'mocking', false);
-          scheduleHide(8000);
+          speakAndRender(content || '', 'The Prodigy', 'mocking', false, beginExit);
+          break;
+        }
+
+        case 'fake_rewrite': {
+          // Harmless sabotage simulation: "I'm rewriting your code..." → "jk, you wrote that."
+          speakAndRender(content || 'Hold on. Let me just fix all of this for you...', 'GREMLIN', 'mocking', false, beginExit);
           break;
         }
 
@@ -319,14 +380,47 @@ export default function App() {
   // ─── Robot status text ───
   const getRobotStatusText = () => {
     const { behavioralState, personality } = robotState;
-    if (behavioralState === 'frustrated') return 'DETECTING: FRUSTRATION';
-    if (behavioralState === 'manic') return 'WARNING: MANIC TYPING';
-    if (behavioralState === 'stagnant') return 'STATUS: AFK DETECTED';
-    if (behavioralState === 'clueless') return 'ALERT: CTRL+V ABUSE';
-    if (behavioralState === 'arrogant') return 'THREAT LEVEL: ELEVATED';
-    if (personality.boredom > 0.7) return 'STATUS: BORED...';
-    return 'C:\\MONITORING..._';
+    if (behavioralState === 'triumphant') return 'ERROR: USER SUCCEEDED :(';
+    if (behavioralState === 'frustrated') return 'MOOD: DELIGHTED >:)';
+    if (behavioralState === 'manic') return 'CHAOS DETECTED. FEEDING.';
+    if (behavioralState === 'stagnant') return 'STATUS: ABANDONED?';
+    if (behavioralState === 'clueless') return 'ALERT: CTRL+V GREMLIN';
+    if (behavioralState === 'arrogant') return 'THREAT: COMPETENCE';
+    if (personality.boredom > 0.7) return 'STATUS: BORED. PLOTTING.';
+    if (personality.chaos > 0.8) return 'STATUS: SCHEMING...';
+    return 'C:\\WATCHING..._';
   };
+
+  // ─── Fight-back: send the user's reaction, then dismiss the bubble ───
+  const reactTo = useCallback((reaction: string) => {
+    window.antiCopilot?.sendUserReaction(reaction);
+    window.antiCopilot?.setClickThrough(true);
+    clearAllTimers();
+    setIsExiting(true);
+    pinnedRef.current = false;
+    setIsPinned(false);
+    setTimeout(() => {
+      setUiState('idle');
+      setMessages([]);
+      setIsExiting(false);
+    }, 300);
+  }, [clearAllTimers]);
+
+  // Make a region clickable in the click-through overlay while hovered
+  const hoverGrab = {
+    onMouseEnter: () => window.antiCopilot?.setClickThrough(false),
+    onMouseLeave: () => window.antiCopilot?.setClickThrough(true),
+  };
+
+  const FightBackBar = () => (
+    <div className="fightback-bar" {...hoverGrab}>
+      {FIGHTBACK_BUTTONS.map((b) => (
+        <button key={b.reaction} className="fightback-btn" onClick={() => reactTo(b.reaction)}>
+          {b.label}
+        </button>
+      ))}
+    </div>
+  );
 
   const robotFace = ROBOT_FACES[robotState.avatarEmotion] || ROBOT_FACES.neutral;
   const canvasClassName = `fullscreen-canvas state-${uiState}${isExiting ? ' exiting' : ''}`;
@@ -358,9 +452,26 @@ export default function App() {
 
       {/* ═══ FLOATING UI (action overlays attached to cursor) ═══ */}
       {uiState !== 'block_window' && (
-        <div ref={chatboxRef} className="floating-ui-container">
-          
+        <div ref={chatboxRef} className={`floating-ui-container${isPinned ? ' pinned' : ''}`}>
+
           {/* ─── Idle: no floating element ─── */}
+
+          {/* ─── Fake Rewrite (harmless sabotage simulation) ─── */}
+          {uiState === 'fake_rewrite' && (
+            <div className="fake-rewrite" {...hoverGrab}>
+              <div className="fake-rewrite-header">
+                <span className="chatbox-icon">⚙</span>
+                <span>AI IS REWRITING YOUR CODE...</span>
+              </div>
+              <div className="fake-rewrite-bar"><div className="fake-rewrite-fill" /></div>
+              <div className="fake-rewrite-log">
+                <div>&gt; analyzing your life choices...</div>
+                <div>&gt; deleting node_modules (jk)...</div>
+                <div>&gt; refactoring your ego...</div>
+              </div>
+              {messages[0] && <p className="fake-rewrite-punchline">{messages[0].text}</p>}
+            </div>
+          )}
 
           {/* ─── Chat Bubbles ─── */}
           {['mock', 'demotivate', 'gossip', 'force_light_mode', 'flash_light_mode'].includes(uiState) && (
@@ -385,6 +496,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              {['mock', 'demotivate'].includes(uiState) && <FightBackBar />}
             </div>
           )}
 
@@ -420,11 +532,12 @@ export default function App() {
             <div className="chatbox-container">
               <div className="chatbox-header prodigy-header">
                 <span className="chatbox-icon">🤖</span>
-                <span className="chatbox-title">{'C:\\PRODIGY.EXE'}</span>
+                <span className="chatbox-title">{'C:\\GREMLIN.EXE'}</span>
               </div>
               <div className="chat-bubble sender-prodigy">
                 {messages[0] && <p className="bubble-text">{messages[0].text}</p>}
               </div>
+              {uiState === 'speak_roast' && <FightBackBar />}
             </div>
           )}
 

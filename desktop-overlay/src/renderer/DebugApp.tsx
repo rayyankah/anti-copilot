@@ -7,15 +7,6 @@ interface DebugLog {
   message: string;
 }
 
-declare global {
-  interface Window {
-    antiCopilot: {
-      onTrigger: (callback: (trigger: unknown) => void) => void;
-      onDebug: (callback: (log: any) => void) => void;
-    };
-  }
-}
-
 export default function DebugApp() {
   const [booting, setBooting] = useState(true);
   const [logs, setLogs] = useState<DebugLog[]>([]);

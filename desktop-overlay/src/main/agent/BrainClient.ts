@@ -34,6 +34,25 @@ export class BrainClient {
   }
 
   /**
+   * Load this developer's persisted relationship profile from the brain
+   * (backed by DynamoDB). Returns null if none exists or on failure.
+   */
+  async loadProfile(userId: string): Promise<{
+    escalationLevel?: number;
+    favoriteAttack?: string;
+    fears?: string[];
+    triumphsWitnessed?: number;
+  } | null> {
+    try {
+      const result = await this.get(`/api/profile?userId=${encodeURIComponent(userId)}`, true);
+      const parsed = result as { profile?: unknown };
+      return (parsed?.profile as never) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Check if the brain server is healthy.
    */
   async isHealthy(): Promise<boolean> {
@@ -85,17 +104,29 @@ export class BrainClient {
     });
   }
 
-  private get(path: string): Promise<number> {
+  private get(path: string, parseBody = false): Promise<number | unknown> {
     return new Promise((resolve, reject) => {
       const url = new URL(path, this.brainUrl);
       const req = http.get(url, (res) => {
-        res.resume();
-        resolve(res.statusCode || 0);
+        if (!parseBody) {
+          res.resume();
+          resolve(res.statusCode || 0);
+          return;
+        }
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            reject(new Error('Invalid JSON in GET response'));
+          }
+        });
       });
       req.on('error', reject);
       req.setTimeout(3000, () => {
         req.destroy();
-        reject(new Error('Health check timed out'));
+        reject(new Error('GET request timed out'));
       });
     });
   }

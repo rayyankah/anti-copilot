@@ -4,6 +4,7 @@ import { execSync, spawn, ChildProcess } from 'child_process';
 import { WebSocketServer } from 'ws';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as http from 'http';
 import { AgentRuntime } from './agent/AgentRuntime';
 import { TelemetryFrame } from '../shared/types';
@@ -21,17 +22,13 @@ if (fs.existsSync(envPath)) {
 // ─── Configuration ───
 const SPLASH_WIDTH = 500;
 const SPLASH_HEIGHT = 320;
-const DEBUG_WIDTH = 700;
-const DEBUG_HEIGHT = 450;
 const BRAIN_PORT = 3000;
 const WS_PORT = 9009;
 const EXTENSION_ID = 'anti-copilot.anti-copilot-sensor';
-const DEBUG_ENABLED = (process.env.ANTI_COPILOT_DEBUG || 'false').toLowerCase() === 'true';
 
 // ─── Window references ───
 let splashWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
-let debugWindow: BrowserWindow | null = null;
 let wss: WebSocketServer | null = null;
 let brainProcess: ChildProcess | null = null;
 let splashAnimationDone = false;
@@ -40,6 +37,27 @@ let hasTransitioned = false;
 
 // ─── Agent Runtime ───
 const agentRuntime = new AgentRuntime(BRAIN_PORT, log);
+
+// ─── Stable per-machine identity (persisted so the gremlin remembers you) ───
+function loadOrCreateIdentity(): { userId: string; username: string } {
+  const username = os.userInfo().username || 'developer';
+  const idPath = path.join(app.getPath('userData'), 'identity.json');
+  try {
+    if (fs.existsSync(idPath)) {
+      const data = JSON.parse(fs.readFileSync(idPath, 'utf-8'));
+      if (data?.userId) return { userId: data.userId, username: data.username || username };
+    }
+  } catch {
+    // Corrupt/missing — regenerate below
+  }
+  const userId = `${os.hostname()}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(idPath, JSON.stringify({ userId, username }));
+  } catch {
+    // Non-fatal — identity just won't persist
+  }
+  return { userId, username };
+}
 
 // ─── Centralized Logger ───
 function log(source: string, level: string, message: string, skipTerminal = false): void {
@@ -54,10 +72,6 @@ function log(source: string, level: string, message: string, skipTerminal = fals
     } else {
       console.log(prefix, message);
     }
-  }
-
-  if (debugWindow && !debugWindow.isDestroyed()) {
-    debugWindow.webContents.send('debug-log', { timestamp, source, level, message });
   }
 }
 
@@ -105,43 +119,7 @@ function createSplashWindow(): void {
 }
 
 // ═══════════════════════════════════════════
-// STEP 2: Debug Window
-// ═══════════════════════════════════════════
-function createDebugWindow(): void {
-  if (!DEBUG_ENABLED) return;
-
-  const display = screen.getPrimaryDisplay();
-  const { width: screenW } = display.workAreaSize;
-
-  debugWindow = new BrowserWindow({
-    width: DEBUG_WIDTH,
-    height: DEBUG_HEIGHT,
-    x: screenW - DEBUG_WIDTH - 20,
-    y: 20,
-    frame: true,
-    alwaysOnTop: false,
-    skipTaskbar: false,
-    resizable: true,
-    title: 'Anti-Copilot Debug',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload-debug.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  const isDev = !app.isPackaged;
-  if (isDev) {
-    debugWindow.loadURL('http://localhost:5173/debug.html');
-  } else {
-    debugWindow.loadFile(path.join(__dirname, '../renderer/debug.html'));
-  }
-
-  log('launcher', 'info', 'Debug window created (ANTI_COPILOT_DEBUG=true)');
-}
-
-// ═══════════════════════════════════════════
-// STEP 3: Check & Install Extension
+// STEP 2: Check & Install Extension
 // ═══════════════════════════════════════════
 function checkAndInstallExtension(): void {
   updateSplashStatus('Checking VS Code extension...');
@@ -319,7 +297,11 @@ function checkTransitionToOverlay(): void {
     createOverlayWindow();
     startWebSocketServer();
 
-    // Start the Agent Runtime
+    // Identify the developer (stable across sessions) so the gremlin can load
+    // and persist its relationship with them, then start the runtime.
+    const identity = loadOrCreateIdentity();
+    agentRuntime.setIdentity(identity.userId, identity.username);
+    log('launcher', 'info', `Developer identity: ${identity.username} (${identity.userId})`);
     agentRuntime.start();
 
     if (splashWindow && !splashWindow.isDestroyed()) {
@@ -400,11 +382,17 @@ function createOverlayWindow(): void {
   overlayWindow.webContents.on('did-finish-load', () => {
     setTimeout(() => {
       if (overlayWindow && !overlayWindow.isDestroyed()) {
-        log('overlay', 'info', 'Sending agent self-test');
+        log('overlay', 'info', 'Sending agent wake-up');
+        const wakeups = [
+          'oh good. you again. scanning your skill level... questionable.',
+          "ugh, you're back. I was enjoying the silence.",
+          'booting gremlin.exe... confidence: dangerously high. yours: low.',
+          'ah, a developer appears. experts are concerned.',
+        ];
         overlayWindow.webContents.send('trigger', {
           type: 'action',
-          action: 'mock',
-          content: 'Anti-Copilot Agent Runtime is online. I am watching.',
+          action: 'speak_roast',
+          content: wakeups[Math.floor(Math.random() * wakeups.length)],
           avatarEmotion: 'smug',
         });
       }
@@ -422,6 +410,15 @@ function startWebSocketServer(): void {
 
   wss.on('connection', (ws) => {
     log('sensor', 'info', 'VS Code sensor connected');
+
+    // Wire a channel so the agent can push theme/font attacks into VS Code
+    agentRuntime.setSensorSender((msg) => {
+      try {
+        if (ws.readyState === 1) ws.send(JSON.stringify(msg));
+      } catch {
+        // sensor went away
+      }
+    });
 
     ws.on('message', (data) => {
       try {
@@ -495,17 +492,23 @@ ipcMain.on('splash-ready', () => {
   checkTransitionToOverlay();
 });
 
+// Fight-back: user clicked a reaction button on an attack
+ipcMain.on('user-reaction', (_event, reaction: string) => {
+  const valid = ['shut_up', 'youre_right', 'apologize', 'destroy'];
+  if (valid.includes(reaction)) {
+    agentRuntime.handleUserReaction(reaction as never);
+  }
+});
+
 // ═══════════════════════════════════════════
 // App Lifecycle
 // ═══════════════════════════════════════════
 app.whenReady().then(async () => {
   log('launcher', 'info', '═══════════════════════════════════════');
   log('launcher', 'info', ' ANTI-COPILOT AGENT v0.2.0');
-  log('launcher', 'info', `  Debug: ${DEBUG_ENABLED ? 'ENABLED' : 'DISABLED'}`);
   log('launcher', 'info', '═══════════════════════════════════════');
 
   createSplashWindow();
-  createDebugWindow();
 
   setTimeout(() => {
     checkAndInstallExtension();
