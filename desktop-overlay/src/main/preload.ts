@@ -24,4 +24,9 @@ contextBridge.exposeInMainWorld('antiCopilot', {
   sendUserReaction: (reaction: string) => {
     ipcRenderer.send('user-reaction', reaction);
   },
+
+  // ─── App Lifecycle ───
+  quitApp: () => {
+    ipcRenderer.send('quit-app');
+  },
 });

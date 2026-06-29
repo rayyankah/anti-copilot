@@ -220,7 +220,6 @@ When the brain decides to act, the overlay executes one of 12+ actions:
 | `demotivate` | Text specifically crafted to make you want to quit |
 | `mock` | Pure intelligence mockery |
 | `gossip` | Staggered group chat from 3 personas simultaneously mocking your error |
-| `trigger_tantrum` | Screen shake + audio |
 | `flash_theme_strobe` | Rapid light/dark mode flashing in VS Code |
 | `trigger_peekaboo` | Giant emoji face slides up from the bottom of your screen |
 | `play_video` | YouTube video overlay (default: Rick Roll) |

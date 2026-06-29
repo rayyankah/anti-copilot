@@ -45,6 +45,9 @@ export class MemorySystem {
     sessionStartTime: Date.now(),
     interactionCount: 0,
     activeErrors: [],
+    currentFile: '',
+    fileStartTime: 0,
+    currentArc: null,
   };
 
   // ─── Episodic Memory (local buffer, flush to DynamoDB later) ───
@@ -72,10 +75,56 @@ export class MemorySystem {
     return { ...this.working };
   }
 
-  updateState(state: BehavioralState, personality: PersonalityState, errors: string[]): void {
+  updateState(state: BehavioralState, personality: PersonalityState, errors: string[], filePath?: string): void {
     this.working.currentBehavioralState = state;
     this.working.currentPersonality = { ...personality };
     this.working.activeErrors = errors;
+
+    const fileName = filePath
+      ? (filePath.split('/').pop() || filePath.split('\\').pop() || filePath)
+      : '';
+
+    // ─── File Tracking ───
+    if (fileName && fileName !== this.working.currentFile) {
+      // Developer switched files — track the new one
+      this.working.currentFile = fileName;
+      this.working.fileStartTime = Date.now();
+    }
+
+    // ─── Current Arc (Drama Narrative) Logic ───
+    if (state === BehavioralState.Triumphant) {
+      // User succeeded — arc is over
+      if (this.working.currentArc) {
+        this.working.currentArc = null;
+      }
+    } else if (errors.length > 0 && fileName) {
+      // Errors present — error-based arc (strongest signal)
+      const problemDesc = `errors in ${fileName}`;
+      if (!this.working.currentArc || this.working.currentArc.problem !== problemDesc) {
+        this.working.currentArc = {
+          problem: problemDesc,
+          startedAt: Date.now(),
+          timesMentioned: 0,
+          lastEscalation: 'none',
+        };
+      }
+    } else if (fileName && !this.working.currentArc) {
+      // No errors but developer has been editing the same file for >60s — file-based arc
+      const editDuration = Date.now() - this.working.fileStartTime;
+      if (editDuration > 60_000) {
+        this.working.currentArc = {
+          problem: `working on ${fileName}`,
+          startedAt: this.working.fileStartTime,
+          timesMentioned: 0,
+          lastEscalation: 'none',
+        };
+      }
+    } else if (state === BehavioralState.Normal && this.working.currentArc) {
+      // If things stay normal for a while with no errors, clear the arc
+      if (Date.now() - this.working.currentArc.startedAt > 120_000 && this.working.activeErrors.length === 0) {
+         this.working.currentArc = null;
+      }
+    }
 
     // Learn the developer's recurring weaknesses from their errors → "fears"
     for (const err of errors) {
@@ -167,6 +216,11 @@ export class MemorySystem {
     // The gremlin slowly grows bolder the longer it torments this developer
     if (this.working.interactionCount % 5 === 0) {
       this.relationship.escalationLevel = Math.min(10, this.relationship.escalationLevel + 0.5);
+    }
+    
+    if (this.working.currentArc) {
+      this.working.currentArc.timesMentioned++;
+      this.working.currentArc.lastEscalation = decision.action;
     }
   }
 

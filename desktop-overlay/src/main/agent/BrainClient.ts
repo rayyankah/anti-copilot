@@ -1,16 +1,33 @@
 import http from 'http';
+import https from 'https';
 import { AgentPayload, AgentDecision } from '../../shared/types';
 
 /**
  * BrainClient — HTTP client for the AWS Bedrock brain API.
  * Posts behavioral profiles and receives structured agent decisions.
+ *
+ * Targets the hosted Vercel brain by default (override with the
+ * ANTI_COPILOT_BRAIN_URL env var), and falls back to a local dev server.
  */
+const DEFAULT_BRAIN_URL = 'https://vercel-brain-zeta.vercel.app';
+
 export class BrainClient {
   private readonly brainUrl: string;
   private readonly timeoutMs = 15_000;
 
   constructor(brainPort: number = 3000) {
-    this.brainUrl = `http://127.0.0.1:${brainPort}`;
+    const override = process.env.ANTI_COPILOT_BRAIN_URL?.trim();
+    if (override) {
+      this.brainUrl = override;
+    } else if (process.env.ANTI_COPILOT_LOCAL_BRAIN === '1') {
+      this.brainUrl = `http://127.0.0.1:${brainPort}`;
+    } else {
+      this.brainUrl = DEFAULT_BRAIN_URL;
+    }
+  }
+
+  private transport(url: URL): typeof http | typeof https {
+    return url.protocol === 'https:' ? https : http;
   }
 
   /**
@@ -69,11 +86,11 @@ export class BrainClient {
       const data = JSON.stringify(body);
       const url = new URL(path, this.brainUrl);
 
-      const req = http.request(
+      const req = this.transport(url).request(
         {
           hostname: url.hostname,
-          port: url.port,
-          path: url.pathname,
+          port: url.port || (url.protocol === 'https:' ? 443 : 80),
+          path: url.pathname + url.search,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -107,7 +124,7 @@ export class BrainClient {
   private get(path: string, parseBody = false): Promise<number | unknown> {
     return new Promise((resolve, reject) => {
       const url = new URL(path, this.brainUrl);
-      const req = http.get(url, (res) => {
+      const req = this.transport(url).get(url, (res) => {
         if (!parseBody) {
           res.resume();
           resolve(res.statusCode || 0);

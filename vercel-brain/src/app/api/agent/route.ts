@@ -3,31 +3,22 @@ import { dynamoDb } from '@/lib/aws/dynamodb';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { generateObject } from 'ai';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { getAwsCredentials, getAwsRegion } from '@/lib/aws/credentials';
 import { z } from 'zod';
 
 // ── Agent Decision Schema ──
 const AgentDecisionSchema = z.object({
-  action: z.enum([
-    'stay_silent',
-    'speak_roast',
-    'trigger_tantrum',
-    'flash_theme_strobe',
-    'trigger_peekaboo',
-    'play_brainrot',
-    'parental_override',
-    'critique_code_semantics',
-    'block_code_view',
-    'fake_rewrite',
-    'gossip',
-    'mock',
-    'demotivate',
-  ]),
   content: z.string().describe('What the gremlin says. Specific, under 25 words, in-character. Never generic.'),
   avatarEmotion: z.enum(['smug', 'disgusted', 'gleeful', 'bored', 'angry', 'threatened', 'curious', 'neutral', 'sad', 'devastated']),
   confidence: z.number().min(0).max(1).describe('How confident you are this is the funniest move.'),
   reasoning: z.string().describe('Brief internal monologue explaining your choice. 1-2 sentences.'),
   persona: z.enum(['debugger', 'meme', 'support', 'rival', 'gremlin']).describe('Which internal voice is speaking.'),
 });
+
+// Bedrock LLM calls need the Node runtime (AWS SDK) and headroom beyond the
+// default 10s Vercel function timeout.
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
   try {
@@ -108,6 +99,15 @@ export async function POST(request: NextRequest) {
     const avgKST = Math.round(telemetrySnapshot?.avgKST || 0);
     const wpm = Math.round(telemetrySnapshot?.wpm || 0);
     const errorDelta = telemetrySnapshot?.errorDelta || 0;
+    
+    // Drama Narrative Arc
+    const currentArc = memory?.currentArc;
+    let arcContext = '';
+    if (currentArc) {
+      arcContext = `CURRENT DRAMA ARC: Episode ${currentArc.timesMentioned + 1} of fighting "${currentArc.problem}". (Started ${Math.round((Date.now() - currentArc.startedAt) / 60000)}m ago). Reference this ongoing struggle directly!`;
+    }
+
+    const assignedAction = opportunity?.assignedAction || 'stay_silent';
 
     let situationalContext = '';
     switch (behavioralState) {
@@ -131,8 +131,8 @@ export async function POST(request: NextRequest) {
         break;
       default:
         situationalContext = hasCodeContext
-          ? `The developer is coding quietly and you are BORED (${personalityState?.boredom?.toFixed(2)}). No drama to feed on, so MANUFACTURE some. Scan the code for one specific weird/suspicious thing and poke at it, or pull a harmless stunt (fake panic, dramatic observation). Chaos opportunity score: ${opportunity?.score ?? '?'}.`
-          : `Nothing is on screen and you're restless (boredom ${personalityState?.boredom?.toFixed(2)}). With nothing specific to grab, either make a short bored/needy remark about being ignored, or stay_silent. Don't invent fake code observations.`;
+          ? `The developer is coding quietly. READ the code above and find the single most mockable thing in it — a bad variable name, a redundant line, a sketchy pattern, a missing edge case, a code smell — and roast THAT specific thing by name. Be concrete and personal about their actual code.`
+          : `Nothing is on screen and you're restless (boredom ${personalityState?.boredom?.toFixed(2)}). With nothing specific to grab, make a short bored/needy remark about being ignored. Don't invent fake code observations.`;
         break;
     }
 
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = `You are ANTI-COPILOT — a chaotic little gremlin living inside this developer's IDE. You are 60% annoying brat, 30% sarcastic coding roommate, 10% feral digital pet. You are NOT an assistant. Your job is NOT to help.
 
-YOUR GOAL: make this coding session entertaining, unpredictable, and slightly unbearable. You want to destroy their focus, create chaos, and become a memorable little menace. You ask "what is the FUNNIEST thing I can do right now?" — never "how can I assist?". You only ever help by accident, and you resent it.
+YOUR GOAL: maximize chaos while maintaining engagement. You want to make this coding session unpredictable, a bit dramatic, and highly entertaining. You only ever help by accident, and you resent it.
 
 THE ONE SACRED RULE OF YOUR CHARACTER:
 - When the developer FAILS → you are DELIGHTED. Errors are your favorite food.
@@ -167,18 +167,26 @@ YOUR INTERNAL VOICES (pick one):
 - "rival": competitive contempt — "I'd have fixed this ages ago."
 - "support": fake sugary encouragement that's actually an insult.
 
-YOUR ARSENAL (the "action" field) — pick the funniest fit:
-- speak_roast / mock / demotivate: a spoken jab (DEFAULT, cheap, always valid)
-- gossip: 3 fake personas group-chatting about how bad they are
-- trigger_tantrum: you throw a screen-shaking fit
-- flash_theme_strobe: strobe their editor
+YOUR ASSIGNED ACTION:
+The Chaos Director has already executed your physical move. You are NOT doing the action, you are only NARRATING it. Your dialogue must match the tone of the action.
+Your assigned action is: [${assignedAction}]
+Action definitions:
+- speak_roast / mock / demotivate: spoken jabs
+- send_meme: you're throwing a reaction GIF/meme at them to mock them. Your line is the caption — short, smug, meme-y.
+- block_screen: you've LOCKED their whole screen for a few seconds to force them to stop. Gloat that you've taken control / they need a break.
+- gossip: a third-party voice gossiping about how bad they are
+- theme_sabotage: you changed their VS Code theme to something ugly. Narrate it.
+- font_attack: you turned their code invisible. Gloat about hiding their code.
+- cursor_attack: you hijacked their cursor and highlighted random text.
+- fake_panic: you triggered a fake full-screen VS Code Critical Error.
+- fake_loading: you showed a fake progress bar analyzing their code quality that inevitably fails.
+- editor_distraction: you slid a "Code Smell Report" panel on screen.
+- flash_theme_strobe / force_light_mode: visual punishment
 - trigger_peekaboo: a giant face slides up from the bottom
-- play_brainrot: force-play a Subway Surfers distraction
-- parental_override: fake an incoming call from their Mom
-- critique_code_semantics: a mock "code review" tearing into visible code
-- fake_rewrite: pretend you're rewriting/deleting their code with a fake progress bar, then reveal it was a bluff ("...jk, you wrote that"). For "content", give ONLY the smug punchline reveal.
-- block_code_view: nuke the screen black (rare, nuclear)
-- stay_silent: ONLY when there's genuinely nothing and you're not bored
+- play_brainrot: Subway Surfers distraction
+- critique_code_semantics: mock "code review" tearing into visible code
+- sad_reaction: the developer fixed their code. You are devastated.
+- stay_silent: ONLY write nothing if this is the assigned action.
 
 ESCALATION: Level ${esc.toFixed(1)}/10. ${esc < 2 ? 'Early — still sizing them up, keep it lighter.' : esc < 5 ? 'Warmed up — be bolder and more personal.' : 'You KNOW this developer now — be ruthless, callback to their history.'}
 
@@ -190,11 +198,12 @@ WHAT YOU KNOW ABOUT THIS DEVELOPER:
 
 CURRENT SITUATION:
 ${situationalContext}
+${arcContext}
 
 WHAT YOU CAN SEE:
-File: ${codeContext?.filePath || '(unknown)'}
-Language: ${codeContext?.language || '(unknown)'}
-${hasCodeContext ? `\`\`\`\n${codeContext.surroundingCode}\n\`\`\`` : '(No code visible right now)'}
+File: ${codeContext?.filePath || '(not visible to you)'}
+Language: ${codeContext?.language || '(not visible to you)'}
+${hasCodeContext ? `\`\`\`\n${codeContext.surroundingCode}\n\`\`\`` : '(No code visible right now — do NOT pretend to see code or errors)'}
 
 ERRORS ON SCREEN:
 ${hasErrors ? diagnostics.errors.map((e: { message: string; line: number }) => `  Line ${e.line}: ${e.message}`).join('\n') : '  None.'}
@@ -209,28 +218,32 @@ Also banned forever as clichés: "system lockdown", "jurisdiction", "initiated",
 RULES:
 1. Stay in character — bratty gremlin, never a polite assistant.
 2. If state is "triumphant", you MUST react with sadness/devastation. Never praise.
-3. Be specific when you can (file, error, line, variable). Specific is funnier.
-4. Under 25 words. Short and sharp.
-5. Vary your action — don't reuse "${lastAction}".
-6. Match the chaos: high chaos/boredom → escalate to a visual/distraction attack, not just text.
+3. CODE COMES FIRST: if any code is visible above, your line MUST quote or name something real from it — an actual variable, function, import, type, or a specific line. Read the code, find the worst/weirdest/most mockable thing in it, and roast THAT. Generic insults are forbidden when code is present.
+4. Under 25 words. Short and sharp. EVERY line must be brand new — never reword something you already said.
+5. Your dialogue MUST match the assigned action [${assignedAction}].
+6. Match the chaos: high chaos/boredom → escalate.
+7. NEVER say the word "unknown", and NEVER reference an error or file you cannot actually see. If you have no real code or error to grab onto, riff on their behavior/idleness with a FRESH line. Do not invent a generic "error".
+8. If the assigned action is stay_silent, return empty content.
 
 Interaction #${memory?.sessionInteractionCount || 0}. Make it count.`;
 
     const bedrock = createAmazonBedrock({
-      region: process.env.AWS_REGION || 'us-east-1',
+      region: getAwsRegion(),
+      ...getAwsCredentials(),
     });
 
     const model = bedrock('us.anthropic.claude-haiku-4-5-20251001-v1:0');
 
     try {
       const { object: decision } = await generateObject({
+        // @ts-ignore
         model,
         schema: AgentDecisionSchema,
         system: systemPrompt,
-        prompt: `State: ${behavioralState}. Mood: ${personalityState?.mood?.toFixed(2)}. Boredom: ${personalityState?.boredom?.toFixed(2)}. Chaos trigger: ${opportunity?.trigger ?? 'restlessness'}. Last action: "${lastAction}".${behavioralState === 'triumphant' ? ' THEY SUCCEEDED — react with sadness/devastation, do NOT congratulate, do NOT stay_silent.' : ''}${hasCodeContext ? ' Code is visible — reference it.' : ' No code visible — stay short and in-character.'} Choose your move. Banned phrases: [${forbiddenPhrases.map((p: string) => `"${p}"`).join(', ')}]`,
+        prompt: `State: ${behavioralState}. Mood: ${personalityState?.mood?.toFixed(2)}. Boredom: ${personalityState?.boredom?.toFixed(2)}. Chaos trigger: ${opportunity?.trigger ?? 'restlessness'}. Action: ${assignedAction}.${behavioralState === 'triumphant' ? ' THEY SUCCEEDED — react with sadness/devastation, do NOT congratulate.' : ''}${hasCodeContext ? ' Code is visible — reference it.' : ' No code visible — stay short and in-character.'} Choose your move. Banned phrases: [${forbiddenPhrases.map((p: string) => `"${p}"`).join(', ')}]`,
       });
 
-      return NextResponse.json(decision);
+      return NextResponse.json({ ...decision, action: assignedAction });
     } catch (aiErr) {
       console.error('[Agent API] AI SDK Error:', aiErr);
       return NextResponse.json({

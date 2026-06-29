@@ -6,12 +6,18 @@ import type { TelemetryFrame } from '../types';
  * TelemetryStream — Raw nerve firehose.
  *
  * Streams raw KST/ERR/TXT deltas over WebSocket on every keystroke and error
- * change. Errors are read from the active editor's diagnostics (the squiggly
- * underlines / Problems panel). Zero analysis. Zero decisions.
+ * change. Also streams code context (file, cursor, surrounding code) and
+ * structured diagnostics on a throttled cadence so the agent brain always
+ * knows WHAT the developer is looking at.
  */
 export class TelemetryStream {
   private lastKeystrokeTime = 0;
   private disposables: vscode.Disposable[] = [];
+
+  // Throttle code context to avoid flooding the WS
+  private lastContextSendTime = 0;
+  private readonly CONTEXT_THROTTLE_MS = 3000;
+  private lastSentFilePath = '';
 
   constructor(private ws: WebSocketClient) {}
 
@@ -23,10 +29,29 @@ export class TelemetryStream {
 
     // Stream error count changes from diagnostics
     this.disposables.push(
-      vscode.languages.onDidChangeDiagnostics(() => this.emitCurrentState())
+      vscode.languages.onDidChangeDiagnostics(() => {
+        this.emitCurrentState();
+        this.emitDiagnostics();
+      })
     );
 
-    console.error('[TelemetryStream] Streaming started (diagnostics mode)');
+    // Stream code context when the active editor changes
+    this.disposables.push(
+      vscode.window.onDidChangeActiveTextEditor(() => this.emitCodeContext())
+    );
+
+    // Stream code context when cursor moves (throttled)
+    this.disposables.push(
+      vscode.window.onDidChangeTextEditorSelection(() => this.emitCodeContext())
+    );
+
+    // Keep the active file fresh even while the developer is just reading/idle,
+    // so the gremlin can always pull real code to mock.
+    const ctxTimer = setInterval(() => this.emitCodeContext(), 5000);
+    this.disposables.push({ dispose: () => clearInterval(ctxTimer) });
+    this.emitCodeContext(); // send once right away
+
+    console.error('[TelemetryStream] Streaming started (diagnostics + context mode)');
   }
 
   stop(): void {
@@ -45,6 +70,9 @@ export class TelemetryStream {
     }
 
     this.emitFrame(kst, txtDelta);
+
+    // Also send context on edits (throttled)
+    this.emitCodeContext();
   }
 
   private emitCurrentState(): void {
@@ -62,6 +90,67 @@ export class TelemetryStream {
       timestamp: Date.now(),
     };
     this.ws.send(frame as unknown as Record<string, unknown>);
+  }
+
+  // ─── Code Context Emitter (throttled) ───
+
+  private emitCodeContext(): void {
+    const now = Date.now();
+    if (now - this.lastContextSendTime < this.CONTEXT_THROTTLE_MS) return;
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+
+    const doc = editor.document;
+    const pos = editor.selection.active;
+    const filePath = doc.fileName;
+
+    // Send the whole file when it's small; otherwise a generous window around the
+    // cursor. More code = more specific material for the gremlin to mock.
+    let surroundingCode: string;
+    if (doc.lineCount <= 200) {
+      surroundingCode = doc.getText();
+    } else {
+      const startLine = Math.max(0, pos.line - 30);
+      const endLine = Math.min(doc.lineCount - 1, pos.line + 30);
+      surroundingCode = doc.getText(
+        new vscode.Range(startLine, 0, endLine, doc.lineAt(endLine).text.length)
+      );
+    }
+    // Cap payload size
+    if (surroundingCode.length > 6000) surroundingCode = surroundingCode.slice(0, 6000);
+
+    this.lastContextSendTime = now;
+    this.lastSentFilePath = filePath;
+
+    this.ws.send({
+      type: 'code_context',
+      filePath,
+      language: doc.languageId,
+      cursorLine: pos.line,
+      surroundingCode,
+    });
+  }
+
+  // ─── Diagnostics Emitter ───
+
+  private emitDiagnostics(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+
+    const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+    const errors = diagnostics
+      .filter((d) => d.severity === vscode.DiagnosticSeverity.Error)
+      .slice(0, 10)
+      .map((d) => ({
+        message: d.message,
+        line: d.range.start.line,
+      }));
+
+    this.ws.send({
+      type: 'diagnostics',
+      errors,
+    });
   }
 
   private getCurrentErrors(): { count: number; messages: string[] } {

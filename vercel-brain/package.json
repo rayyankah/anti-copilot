@@ -4,10 +4,10 @@
   "private": true,
   "description": "The AI brain of Anti-Copilot: telemetry processing, LLM responses, and the Global Hall of Shame",
   "scripts": {
-    "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "next dev",
+    "lint": "next lint",
+    "start": "next start"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^1.1.6",
@@ -20,6 +20,7 @@
     "next": "^15.3.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "sst": "4.17.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

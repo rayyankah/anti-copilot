@@ -6,6 +6,7 @@ import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
+import * as https from 'https';
 import { AgentRuntime } from './agent/AgentRuntime';
 import { TelemetryFrame } from '../shared/types';
 
@@ -25,6 +26,21 @@ const SPLASH_HEIGHT = 320;
 const BRAIN_PORT = 3000;
 const WS_PORT = 9009;
 const EXTENSION_ID = 'anti-copilot.anti-copilot-sensor';
+
+// The Gremlin brain is hosted on Vercel. Override with ANTI_COPILOT_BRAIN_URL
+// (or run a local brain with ANTI_COPILOT_LOCAL_BRAIN=1, see BrainClient).
+const BACKEND_URL = (process.env.ANTI_COPILOT_BRAIN_URL || 'https://vercel-brain-zeta.vercel.app').replace(/\/$/, '');
+
+// Gremlin-flavored lines shown on the splash while we wait for the backend.
+const CONNECTING_MESSAGES = [
+  'Waking the gremlin...',
+  'Bribing the cloud...',
+  'Sharpening fresh insults...',
+  'Negotiating with the backend...',
+  'Loading your worst habits...',
+  'Reading your code (and judging it)...',
+  'Almost ready to ruin your day...',
+];
 
 // ─── Window references ───
 let splashWindow: BrowserWindow | null = null;
@@ -155,133 +171,93 @@ function checkAndInstallExtension(): void {
 }
 
 // ═══════════════════════════════════════════
-// STEP 4: Start Brain Server
+// STEP 4: Connect to the hosted Gremlin brain
 // ═══════════════════════════════════════════
-function startBrainServer(): void {
-  const killPort = (port: number) => {
-    try {
-      if (process.platform === 'win32') {
-        const output = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000 });
-        const lines = output.trim().split('\n');
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[parts.length - 1];
-          if (pid && /^\d+$/.test(pid)) {
-            log('launcher', 'info', `Killing orphaned process on port ${port} (PID: ${pid})`);
-            execSync(`taskkill /pid ${pid} /F`, { stdio: 'ignore', timeout: 5000 });
-          }
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  };
+let connectMsgTimer: NodeJS.Timeout | null = null;
 
-  killPort(BRAIN_PORT);
-  killPort(WS_PORT);
-
-  updateSplashStatus('Starting brain server...');
-
-  const brainDir = path.join(projectRoot, 'vercel-brain');
-  
-  if (!fs.existsSync(path.join(brainDir, 'node_modules'))) {
-    log('launcher', 'warn', 'vercel-brain/node_modules missing — brain may fail to start');
-  }
-
-  const isWindows = process.platform === 'win32';
-  brainProcess = spawn(
-    isWindows ? 'npx.cmd' : 'npx',
-    ['next', 'dev', '-H', '127.0.0.1', '--port', String(BRAIN_PORT)],
-    {
-      cwd: brainDir,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: isWindows,
-    }
-  );
-
-  brainProcess.stdout?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(l => l.trim());
-    lines.forEach(line => {
-      try {
-        const parsed = JSON.parse(line.trim());
-        if (parsed.type === 'debug') {
-          log(parsed.source || 'brain', 'debug', parsed.message, true);
-          return;
-        }
-      } catch {
-        // Not structured
-      }
-      log('brain', 'info', line.trim());
-    });
-  });
-
-  brainProcess.stderr?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(l => l.trim());
-    lines.forEach(line => {
-      if (line.includes('Ready') || line.includes('ready') || line.includes('started')) {
-        log('brain', 'info', line.trim());
-      } else {
-        log('brain', 'warn', line.trim());
-      }
-    });
-  });
-
-  brainProcess.on('error', (err) => {
-    log('brain', 'error', `Failed to start: ${err.message}`);
-    updateSplashStatus('Brain server failed to start', 'error');
-  });
-
-  brainProcess.on('exit', (code) => {
-    log('brain', 'warn', `Brain server exited with code ${code}`);
-    brainProcess = null;
-  });
-
-  pollBrainReady();
+function cycleConnectingMessages(): void {
+  let i = 0;
+  updateSplashStatus(CONNECTING_MESSAGES[0]);
+  connectMsgTimer = setInterval(() => {
+    i = (i + 1) % CONNECTING_MESSAGES.length;
+    if (!brainReady) updateSplashStatus(CONNECTING_MESSAGES[i]);
+  }, 1400);
 }
 
-function pollBrainReady(attempts: number = 0): void {
-  if (brainReady || hasTransitioned) return;
+function stopConnectingMessages(): void {
+  if (connectMsgTimer) {
+    clearInterval(connectMsgTimer);
+    connectMsgTimer = null;
+  }
+}
 
-  if (attempts > 30) {
-    log('launcher', 'warn', 'Brain server did not respond in time — continuing anyway');
-    updateSplashStatus('Brain timeout — continuing...', 'warn');
+function connectToBackend(attempts: number = 0): void {
+  if (brainReady || hasTransitioned) return;
+  if (attempts === 0) cycleConnectingMessages();
+
+  // Give up gracefully after ~30s — boot anyway, the runtime keeps retrying.
+  if (attempts > 20) {
+    stopConnectingMessages();
+    log('launcher', 'warn', 'Backend did not respond in time — booting offline; the gremlin will keep trying.');
+    updateSplashStatus('Backend slow — booting anyway...', 'warn');
     brainReady = true;
     checkTransitionToOverlay();
     return;
   }
 
+  const transport = BACKEND_URL.startsWith('https') ? https : http;
   let reqFinished = false;
 
-  const req = http.get(`http://localhost:${BRAIN_PORT}`, (res) => {
+  const req = transport.get(`${BACKEND_URL}/api/commentator`, (res) => {
     if (reqFinished) return;
     reqFinished = true;
+    res.resume();
     if (res.statusCode && res.statusCode < 500) {
-      log('launcher', 'info', `Brain server ready (status ${res.statusCode})`);
-      updateSplashStatus('Brain server ready ✓', 'success');
+      stopConnectingMessages();
+      log('launcher', 'info', `Backend reachable (status ${res.statusCode}) at ${BACKEND_URL}`);
+      updateSplashStatus('Gremlin connected ✓', 'success');
       brainReady = true;
       checkTransitionToOverlay();
     } else {
-      retryPoll(attempts);
+      retryConnect(attempts);
     }
   });
 
   req.on('error', () => {
     if (reqFinished) return;
     reqFinished = true;
-    retryPoll(attempts);
+    retryConnect(attempts);
   });
 
-  req.setTimeout(2000, () => {
+  req.setTimeout(2500, () => {
     if (reqFinished) return;
     reqFinished = true;
     req.destroy();
-    retryPoll(attempts);
+    retryConnect(attempts);
   });
 }
 
-function retryPoll(attempts: number): void {
-  setTimeout(() => pollBrainReady(attempts + 1), 1000);
+function retryConnect(attempts: number): void {
+  setTimeout(() => connectToBackend(attempts + 1), 1000);
+}
+
+function killPort(port: number) {
+  try {
+    if (process.platform === 'win32') {
+      const output = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000 });
+      const lines = output.trim().split('\n');
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && /^\d+$/.test(pid)) {
+          log('launcher', 'info', `Killing orphaned process on port ${port} (PID: ${pid})`);
+          execSync(`taskkill /pid ${pid} /F`, { stdio: 'ignore', timeout: 5000 });
+        }
+      }
+    }
+  } catch {
+    // Ignore
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -362,6 +338,7 @@ function createOverlayWindow(): void {
   }
 
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
 
   // Cursor tracking
   setInterval(() => {
@@ -377,27 +354,8 @@ function createOverlayWindow(): void {
 
   // Connect overlay to agent runtime
   agentRuntime.overlayBridge.setWindow(overlayWindow);
-
-  // Send initial self-test after load
-  overlayWindow.webContents.on('did-finish-load', () => {
-    setTimeout(() => {
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        log('overlay', 'info', 'Sending agent wake-up');
-        const wakeups = [
-          'oh good. you again. scanning your skill level... questionable.',
-          "ugh, you're back. I was enjoying the silence.",
-          'booting gremlin.exe... confidence: dangerously high. yours: low.',
-          'ah, a developer appears. experts are concerned.',
-        ];
-        overlayWindow.webContents.send('trigger', {
-          type: 'action',
-          action: 'speak_roast',
-          content: wakeups[Math.floor(Math.random() * wakeups.length)],
-          avatarEmotion: 'smug',
-        });
-      }
-    }, 2000);
-  });
+  // No static greeting — the gremlin's opening line is generated by the brain
+  // via the intro sequence in AgentRuntime.
 
   log('launcher', 'info', 'Overlay window created');
 }
@@ -448,22 +406,9 @@ function startWebSocketServer(): void {
           return;
         }
 
-        // ─── Legacy action messages (backwards compat) ───
-        if (message.type === 'action' || message.action) {
-          log('sensor', 'info', `Legacy trigger: ${message.action} — "${(message.content || '').substring(0, 60)}"`);
-
-          if (message.action === 'block_window' && overlayWindow && !overlayWindow.isDestroyed()) {
-            overlayWindow.setIgnoreMouseEvents(false);
-            setTimeout(() => {
-              if (!overlayWindow || overlayWindow.isDestroyed()) return;
-              overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-            }, 8000);
-          }
-
-          if (overlayWindow && !overlayWindow.isDestroyed()) {
-            overlayWindow.webContents.send('trigger', message);
-          }
-        }
+        // Legacy action messages from the sensor are no longer accepted.
+        // The agent brain (AgentRuntime) is the ONLY source of actions.
+        // Any { type: 'action' } messages from the sensor are silently ignored.
       } catch (parseErr) {
         log('sensor', 'error', `Failed to parse message: ${parseErr}`);
       }
@@ -500,19 +445,27 @@ ipcMain.on('user-reaction', (_event, reaction: string) => {
   }
 });
 
+ipcMain.on('quit-app', () => {
+  log('launcher', 'info', 'Quit requested from overlay');
+  cleanup();
+  app.quit();
+});
+
 // ═══════════════════════════════════════════
 // App Lifecycle
 // ═══════════════════════════════════════════
 app.whenReady().then(async () => {
   log('launcher', 'info', '═══════════════════════════════════════');
-  log('launcher', 'info', ' ANTI-COPILOT AGENT v0.2.0');
+  log('launcher', 'info', ' GREMLIN (ANTI-COPILOT) v0.2.0');
+  log('launcher', 'info', ` Brain: ${BACKEND_URL}`);
   log('launcher', 'info', '═══════════════════════════════════════');
 
   createSplashWindow();
 
   setTimeout(() => {
+    killPort(WS_PORT); // clear any stale overlay socket
     checkAndInstallExtension();
-    startBrainServer();
+    connectToBackend();
   }, 500);
 });
 
@@ -535,6 +488,10 @@ process.on('SIGTERM', () => {
   cleanup();
   if (process.platform !== 'darwin') app.quit();
   process.exit(0);
+});
+
+process.on('exit', () => {
+  cleanup();
 });
 
 function cleanup(): void {
@@ -560,4 +517,8 @@ function cleanup(): void {
     wss.close();
     wss = null;
   }
+
+  // Fallback: kill anything listening on the ports we manage
+  killPort(BRAIN_PORT);
+  killPort(WS_PORT);
 }

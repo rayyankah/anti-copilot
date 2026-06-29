@@ -1,0 +1,9 @@
+
+# sst
+.sst
+
+# open-next
+.open-next
+
+.vercel
+.env*

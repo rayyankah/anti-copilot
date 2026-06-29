@@ -1,4 +1,4 @@
-import { BehavioralState, PersonalityState, UserReaction, AvatarEmotion } from '../../shared/types';
+import { BehavioralState, PersonalityState, UserReaction, AvatarEmotion, GremlinState } from '../../shared/types';
 
 /**
  * PersonalityEngine — The Gremlin's emotional core.
@@ -27,6 +27,8 @@ export class PersonalityEngine {
   private lastUpdateTime = Date.now();
   private lastInteractionTime = Date.now();
   private interactionCount = 0;
+  
+  private currentGremlinState: GremlinState = GremlinState.Idle;
 
   getState(): PersonalityState {
     return { ...this.state };
@@ -104,6 +106,27 @@ export class PersonalityEngine {
       default:
         break;
     }
+
+    // ─── Gremlin State Machine (Determine current phase) ───
+    if (behavioralState === BehavioralState.Triumphant) {
+      this.currentGremlinState = GremlinState.Defeated;
+    } else if (this.state.chaos > 0.8 && this.state.energy > 0.7) {
+      this.currentGremlinState = GremlinState.Attacking;
+    } else if (this.state.annoyance > 0.6 || this.state.chaos > 0.6) {
+      this.currentGremlinState = GremlinState.Teasing;
+    } else if (this.state.boredom > 0.7) {
+      this.currentGremlinState = GremlinState.Plotting;
+    } else if (this.state.boredom > 0.4) {
+      this.currentGremlinState = GremlinState.Bored;
+    } else if (this.state.curiosity > 0.7) {
+      this.currentGremlinState = GremlinState.Curious;
+    } else {
+      this.currentGremlinState = GremlinState.Idle;
+    }
+  }
+
+  getGremlinState(): GremlinState {
+    return this.currentGremlinState;
   }
 
   /**

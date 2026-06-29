@@ -12,6 +12,7 @@ import { MemorySystem } from './MemorySystem';
 import { ChaosPlanner } from './ChaosPlanner';
 import { BrainClient } from './BrainClient';
 import { OverlayBridge } from './OverlayBridge';
+import { ActionManager } from './ActionManager';
 
 /**
  * AgentRuntime — The core autonomous agent loop.
@@ -27,20 +28,28 @@ export class AgentRuntime {
   private personalityEngine: PersonalityEngine;
   private memorySystem: MemorySystem;
   private chaosPlanner: ChaosPlanner;
+  private actionManager: ActionManager;
   private brainClient: BrainClient;
   public overlayBridge: OverlayBridge;
 
   private isRunning = false;
   private loopInterval: NodeJS.Timeout | null = null;
   private readonly TICK_MS = 500;
-  private readonly MIN_BRAIN_INTERVAL = 15_000;       // Min gap on a state change
-  private readonly MIN_FORCE_BRAIN_INTERVAL = 7_000;  // Shorter gate for big moments (success!)
-  private readonly MIN_SPONTANEOUS_INTERVAL = 45_000; // Min gap for pure-boredom self-starts
+  private readonly MIN_BRAIN_INTERVAL = 8_000;        // Min gap on a state change
+  private readonly MIN_FORCE_BRAIN_INTERVAL = 5_000;  // Shorter gate for big moments (success!)
+  private readonly MIN_SPONTANEOUS_INTERVAL = 16_000; // Min gap for pure-boredom self-starts
   private lastBrainCallTime = 0;
   private lastRobotStateUpdate = 0;
+  private lastThoughtStreamLog = 0;
 
-  // Track recent content to suppress duplicate outputs
-  private recentContents: string[] = [];
+  // Track recent message signatures to suppress repeats
+  private recentSignatures: string[] = [];
+
+  // Actions whose whole point is to say something — empty content = suppress
+  private readonly SPEAKING_ACTIONS = new Set([
+    'speak_roast', 'mock', 'demotivate', 'gossip',
+    'critique_code_semantics', 'fake_rewrite', 'parental_override',
+  ]);
 
   // Timers for the scripted opening sequence (mess → discourage)
   private introTimers: NodeJS.Timeout[] = [];
@@ -51,6 +60,7 @@ export class AgentRuntime {
   // Actions that must be executed inside VS Code (not just the overlay)
   private readonly SENSOR_ACTIONS = new Set([
     'flash_theme_strobe', 'force_light_mode', 'flash_light_mode', 'font_attack',
+    'theme_sabotage', 'cursor_attack',
   ]);
 
   // Code context cache (updated via WS messages from sensor)
@@ -74,6 +84,7 @@ export class AgentRuntime {
     this.personalityEngine = new PersonalityEngine();
     this.memorySystem = new MemorySystem();
     this.chaosPlanner = new ChaosPlanner();
+    this.actionManager = new ActionManager(this.memorySystem);
     this.brainClient = new BrainClient(brainPort);
     this.overlayBridge = new OverlayBridge();
     this.logFn = logFn || ((source, level, msg) => console.log(`[${source}] ${msg}`));
@@ -173,6 +184,13 @@ export class AgentRuntime {
    */
   ingestTelemetry(frame: TelemetryFrame): void {
     this.behaviorEngine.ingest(frame);
+    // Keep diagnostics in sync from the telemetry firehose so the brain can
+    // reference REAL errors instead of inventing generic "unknown error" lines.
+    if (frame.err && Array.isArray(frame.err.messages)) {
+      this.cachedDiagnostics = {
+        errors: frame.err.messages.map((message) => ({ message, line: 0 })),
+      };
+    }
   }
 
   /**
@@ -219,7 +237,14 @@ export class AgentRuntime {
 
       // Update memory with current state
       const errorMessages = this.cachedDiagnostics.errors.map(e => e.message);
-      this.memorySystem.updateState(behavioralState, personality, errorMessages);
+      this.memorySystem.updateState(
+        behavioralState,
+        personality,
+        errorMessages,
+        this.cachedCodeContext.filePath
+      );
+
+      const gremlinState = this.personalityEngine.getGremlinState();
 
       // ──── Update robot visual state (every 2s) ────
       const now = Date.now();
@@ -227,11 +252,35 @@ export class AgentRuntime {
         this.lastRobotStateUpdate = now;
         const robotState: RobotState = {
           behavioralState,
+          gremlinState,
           personality,
           avatarEmotion: this.personalityEngine.getDominantEmotion(),
           isIdle: behavioralState === BehavioralState.Normal,
         };
         this.overlayBridge.updateRobotState(robotState);
+      }
+
+      // ──── Thought Stream (Log internal state every 60s) ────
+      if (now - this.lastThoughtStreamLog > 60_000) {
+        this.lastThoughtStreamLog = now;
+        const wm = this.memorySystem.getWorkingMemory();
+        const chaosLvl = this.actionManager.getChaosLevel();
+        const recentActions = this.memorySystem.getRecentActionNames().slice(-3);
+        const errorCount = this.cachedDiagnostics.errors.length;
+        const arcDesc = wm.currentArc
+          ? `${wm.currentArc.problem} (ep ${wm.currentArc.timesMentioned + 1}, ${Math.round((now - wm.currentArc.startedAt) / 60000)}m)`
+          : 'none';
+        this.logFn('agent', 'info', 
+          `[THOUGHT STREAM] ` +
+          `File: ${this.cachedCodeContext.filePath || 'none'} | ` +
+          `Gremlin: ${gremlinState} | ` +
+          `Boredom: ${personality.boredom.toFixed(2)} | ` +
+          `Chaos: ${personality.chaos.toFixed(2)} | ` +
+          `ChaosLvl: ${chaosLvl} | ` +
+          `Errors: ${errorCount} | ` +
+          `Arc: ${arcDesc} | ` +
+          `Recent: [${recentActions.join(', ') || 'none'}]`
+        );
       }
 
       // ──── DECIDE — score the opportunity (Chaos Planner) ────
@@ -266,7 +315,15 @@ export class AgentRuntime {
     const opp = this.chaosPlanner.evaluate(behavioralState, personality, snapshot);
     const trigger = triggerOverride ?? opp.trigger;
     const score = scoreOverride ?? opp.score;
+    
+    // Check with ActionManager
+    if (!this.actionManager.attemptAction(opp)) {
+      this.logFn('agent', 'info', `ActionManager blocked action: ${opp.assignedAction}`);
+      return;
+    }
 
+    this.actionManager.recordActionUsed(opp.assignedAction);
+    
     this.lastBrainCallTime = Date.now();
 
     const memory = this.memorySystem.getContextForBrain();
@@ -293,7 +350,11 @@ export class AgentRuntime {
         triumphsWitnessed: rel.triumphsWitnessed,
         lastReaction: this.memorySystem.getLastReaction(),
       },
-      opportunity: { score, trigger },
+      opportunity: { 
+        score, 
+        trigger, 
+        assignedAction: opp.assignedAction 
+      },
     };
 
     this.logFn('agent', 'info',
@@ -314,15 +375,9 @@ export class AgentRuntime {
       return;
     }
 
-    // Content deduplication — suppress near-identical repeats
-    if (decision.content) {
-      const normalized = decision.content.toLowerCase().trim().slice(0, 80);
-      if (this.recentContents.includes(normalized)) {
-        this.logFn('agent', 'warn', `Suppressed duplicate: "${decision.content.slice(0, 60)}"`);
-        return;
-      }
-      this.recentContents.push(normalized);
-      if (this.recentContents.length > 6) this.recentContents.shift();
+    if (this.isEmptyOrRepeat(decision)) {
+      this.logFn('agent', 'warn', `Suppressed empty/repeat: ${decision.action} — "${(decision.content || '').slice(0, 50)}"`);
+      return;
     }
 
     this.logFn('agent', 'info', `Acting: ${decision.action} — "${decision.content?.substring(0, 60)}"`);
@@ -356,6 +411,27 @@ export class AgentRuntime {
       });
       this.logFn('agent', 'info', `Outcome: ${outcome} (${priorState} → ${postState})`);
     }, 10_000);
+  }
+
+  /**
+   * Reject an action if a speaking action has nothing to say, or if it repeats
+   * something said recently (matched loosely on the first words, so slight
+   * LLM rewordings of the same line are still caught).
+   */
+  private isEmptyOrRepeat(decision: AgentDecision): boolean {
+    const text = (decision.content || '').trim().toLowerCase();
+
+    // A talk action with no real content → drop it (no more empty/"unknown" spam)
+    if (this.SPEAKING_ACTIONS.has(decision.action) && text.replace(/[^a-z0-9]/g, '').length < 3) {
+      return true;
+    }
+    if (!text) return false; // a visual action with no line — that's fine
+
+    const signature = text.split(/\s+/).slice(0, 6).join(' ');
+    if (this.recentSignatures.includes(signature)) return true;
+    this.recentSignatures.push(signature);
+    if (this.recentSignatures.length > 12) this.recentSignatures.shift();
+    return false;
   }
 
   /**

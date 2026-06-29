@@ -1,8 +1,15 @@
-.vscode-test/
+# The extension is bundled into dist/extension.js by esbuild, so ship only that
+# plus package.json. Everything else is dev-only.
+.vscode-test/**
+.vscode/**
 .env
-desktop-overlay/
-vercel-brain/
-node_modules/
-.git/
+node_modules/**
+src/**
+**/*.ts
+**/*.map
+tsconfig.json
+.gitignore
+.eslintrc*
+.vscodeignore
+.git/**
 *.vsix
-src/

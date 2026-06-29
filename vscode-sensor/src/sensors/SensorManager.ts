@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { WebSocketClient } from '../transport/WebSocketClient';
 import { ThemeController } from './ThemeController';
+import { FontController } from './FontController';
+import { CursorController } from './CursorController';
 import { DeveloperIdentity } from '../identity';
 
 /**
@@ -18,6 +20,8 @@ export class SensorManager {
   constructor(
     private wsClient: WebSocketClient,
     private themeController: ThemeController,
+    private fontController: FontController,
+    private cursorController: CursorController,
     private identity: DeveloperIdentity
   ) {
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -142,6 +146,18 @@ export class SensorManager {
     await this.themeController.restoreTheme();
   }
 
+  async sabotageTheme(): Promise<void> {
+    await this.themeController.sabotageTheme();
+  }
+
+  async invisibleFontPrank(): Promise<void> {
+    await this.fontController.invisibleFontPrank();
+  }
+
+  async cursorAttack(): Promise<void> {
+    await this.cursorController.cursorAttack();
+  }
+
   async flashStrobe(count: number = 6): Promise<void> {
     let isLight = false;
     for (let i = 0; i < count; i++) {
@@ -156,15 +172,4 @@ export class SensorManager {
     await this.themeController.restoreTheme();
   }
 
-  // ─── WebSocket action forwarding ───
-
-  forwardAction(action: Record<string, unknown>): void {
-    this.wsClient.send({ ...action, type: 'action' });
-    this.statusBarItem.text = `$(zap) Anti-Copilot: ${action.action}`;
-    setTimeout(() => {
-      if (this.isRunning) {
-        this.statusBarItem.text = '$(eye) Anti-Copilot: Watching...';
-      }
-    }, 3000);
-  }
 }

@@ -1,7 +1,7 @@
 {
   "name": "anti-copilot-sensor",
-  "displayName": "Anti-Copilot Sensor",
-  "description": "Silently monitors your coding habits and reports them to the Anti-Copilot engine",
+  "displayName": "Gremlin Sensor",
+  "description": "Silently monitors your coding habits and feeds them to the Gremlin overlay",
   "version": "0.1.0",
   "publisher": "anti-copilot",
   "repository": {
@@ -22,20 +22,20 @@
     "commands": [
       {
         "command": "antiCopilot.activate",
-        "title": "Anti-Copilot: Activate Sensor"
+        "title": "Gremlin: Activate Sensor"
       },
       {
         "command": "antiCopilot.deactivate",
-        "title": "Anti-Copilot: Deactivate Sensor"
+        "title": "Gremlin: Deactivate Sensor"
       }
     ],
     "configuration": {
-      "title": "Anti-Copilot",
+      "title": "Gremlin",
       "properties": {
         "antiCopilot.apiUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
-          "description": "The URL of the Anti-Copilot Vercel Brain API server"
+          "default": "https://vercel-brain-zeta.vercel.app",
+          "description": "The URL of the hosted Gremlin brain (Vercel backend)"
         },
         "antiCopilot.projectPath": {
           "type": "string",
@@ -50,7 +50,7 @@
     "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
     "lint": "eslint src/",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies"
   },
   "dependencies": {
     "ws": "^8.18.0"

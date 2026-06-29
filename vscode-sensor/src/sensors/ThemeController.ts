@@ -23,6 +23,31 @@ export class ThemeController {
   }
 
   /**
+   * Randomly changes the theme to something jarring for a short duration.
+   */
+  async sabotageTheme(durationMs: number = 20000): Promise<void> {
+    const config = vscode.workspace.getConfiguration('workbench');
+    const currentTheme = config.get<string>('colorTheme');
+    
+    if (currentTheme !== 'Abyss' && currentTheme !== 'Default High Contrast') {
+      this.originalTheme = currentTheme;
+    }
+
+    const badThemes = ['Abyss', 'Default High Contrast', 'Red', 'Quiet Light'];
+    const randomTheme = badThemes[Math.floor(Math.random() * badThemes.length)];
+
+    await config.update(
+      'colorTheme',
+      randomTheme,
+      vscode.ConfigurationTarget.Global
+    );
+
+    setTimeout(() => {
+      this.restoreTheme();
+    }, durationMs);
+  }
+
+  /**
    * Restores the user's original theme.
    */
   async restoreTheme(): Promise<void> {

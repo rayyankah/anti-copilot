@@ -17,6 +17,12 @@ export class OverlayBridge {
    */
   dispatchAction(decision: AgentDecision): void {
     if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return;
+    
+    // Force the overlay to the absolute top of the screen when an action occurs
+    // to prevent it from slipping into the background over time.
+    this.overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+    this.overlayWindow.moveTop();
+
     this.overlayWindow.webContents.send('trigger', {
       type: 'action',
       action: decision.action,

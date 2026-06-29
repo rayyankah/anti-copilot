@@ -13,6 +13,17 @@ export enum BehavioralState {
   Triumphant = 'triumphant', // User SUCCEEDED — the gremlin's worst nightmare
 }
 
+// ── Gremlin State (internal state machine) ──
+export enum GremlinState {
+  Idle = 'idle',
+  Bored = 'bored',
+  Curious = 'curious',
+  Teasing = 'teasing',
+  Attacking = 'attacking',
+  Defeated = 'defeated',
+  Plotting = 'plotting',
+}
+
 // ── Telemetry Frame (raw sensor data streamed via WebSocket) ──
 export interface TelemetryFrame {
   type: 'telemetry';
@@ -91,6 +102,14 @@ export interface WorkingMemory {
   sessionStartTime: number;
   interactionCount: number;
   activeErrors: string[];
+  currentFile: string;           // what file the developer is editing right now
+  fileStartTime: number;         // when they started editing this file
+  currentArc: {
+    problem: string;      // e.g., "errors in auth.ts" or "working on auth.ts"
+    startedAt: number;
+    timesMentioned: number;
+    lastEscalation: string;
+  } | null;
 }
 
 // ── Agent Payload (sent to AWS Brain) ──
@@ -130,6 +149,7 @@ export interface AgentPayload {
   opportunity?: {
     score: number;          // how juicy this moment is for chaos
     trigger: string;        // why the chaos planner fired ("boredom", "success", "repeated_error")
+    assignedAction: string; // The assigned action
   };
 }
 
@@ -144,7 +164,6 @@ export enum ActionType {
   ForceLightMode = 'force_light_mode',
   FlashLightMode = 'flash_light_mode',
   SpeakRoast = 'speak_roast',
-  TriggerTantrum = 'trigger_tantrum',
   FlashThemeStrobe = 'flash_theme_strobe',
   TriggerPeekaboo = 'trigger_peekaboo',
   PlayBrainrot = 'play_brainrot',
@@ -153,11 +172,22 @@ export enum ActionType {
   BlockCodeView = 'block_code_view',
   FakeRewrite = 'fake_rewrite',
   StaySilent = 'stay_silent',
+  
+  // New Attack Library Actions
+  ThemeSabotage = 'theme_sabotage',
+  FontAttack = 'font_attack',
+  FakePanic = 'fake_panic',
+  CursorAttack = 'cursor_attack',
+  FakeLoading = 'fake_loading',
+  EditorDistraction = 'editor_distraction',
+  SadReaction = 'sad_reaction',
+  BlockScreen = 'block_screen',
 }
 
 // ── Robot Overlay State (sent from agent to renderer) ──
 export interface RobotState {
   behavioralState: BehavioralState;
+  gremlinState: GremlinState;
   personality: PersonalityState;
   avatarEmotion: AgentDecision['avatarEmotion'];
   isIdle: boolean;

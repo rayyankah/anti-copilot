@@ -109,6 +109,7 @@ Pick ONE tool. Make it count.`;
 
     try {
       const { toolCalls } = await generateText({
+        // @ts-ignore
         model,
         system: systemPrompt,
         prompt: `Trigger: ${trigger}. Decide your next move. Remember: your last action was "${lastAction}" — do NOT repeat it. ${trigger === 'pause' ? 'The user is idle. You MUST react. Do NOT stay silent.' : ''}`,
@@ -121,12 +122,6 @@ Pick ONE tool. Make it count.`;
             description: 'Deliver a bratty voice-over roast. The chat bubble appears next to the skull with your text. MUST reference specific code from the snippet.',
             parameters: z.object({
               content: z.string().describe('Your roast. Must reference a specific variable name, function, or pattern from their code. Keep under 30 words.'),
-            }),
-          },
-          trigger_tantrum: {
-            description: 'Violently shake the entire screen while screaming. Use when genuinely frustrated by bad code.',
-            parameters: z.object({
-              content: z.string().describe('What you scream during the tantrum. Short, explosive, angry. Under 15 words.'),
             }),
           },
           flash_theme_strobe: {

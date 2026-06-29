@@ -4,12 +4,16 @@ import { WebSocketClient } from './transport/WebSocketClient';
 import { TelemetryStream } from './transport/TelemetryStream';
 import { getOrCreateIdentity } from './identity';
 import { ThemeController } from './sensors/ThemeController';
+import { FontController } from './sensors/FontController';
+import { CursorController } from './sensors/CursorController';
 import { exec } from 'child_process';
 import WebSocket from 'ws';
 
 let sensorManager: SensorManager | null = null;
 let wsClient: WebSocketClient | null = null;
 let themeController: ThemeController | null = null;
+let fontController: FontController | null = null;
+let cursorController: CursorController | null = null;
 let telemetryStream: TelemetryStream | null = null;
 
 /**
@@ -78,7 +82,37 @@ export function activate(context: vscode.ExtensionContext): void {
   // WebSocket for telemetry firehose + action forwarding
   wsClient = new WebSocketClient('ws://localhost:9009');
   themeController = new ThemeController();
-  sensorManager = new SensorManager(wsClient, themeController, identity);
+  fontController = new FontController();
+  cursorController = new CursorController();
+  sensorManager = new SensorManager(wsClient, themeController, fontController, cursorController, identity);
+
+  // ─── Incoming action router ───
+  // The agent brain sends attacks back to VS Code through the same WebSocket.
+  // This is the ONLY way physical IDE attacks execute.
+  wsClient.onMessage((msg) => {
+    if (msg.type !== 'action' || !msg.action) return;
+    console.log(`[Anti-Copilot Sensor] Executing attack: ${msg.action}`);
+    switch (msg.action) {
+      case 'theme_sabotage':
+        sensorManager?.sabotageTheme();
+        break;
+      case 'font_attack':
+        sensorManager?.invisibleFontPrank();
+        break;
+      case 'cursor_attack':
+        sensorManager?.cursorAttack();
+        break;
+      case 'flash_theme_strobe':
+        sensorManager?.flashStrobe();
+        break;
+      case 'force_light_mode':
+      case 'flash_light_mode':
+        sensorManager?.forceLightMode();
+        break;
+      default:
+        console.log(`[Anti-Copilot Sensor] Unknown action: ${msg.action}`);
+    }
+  });
 
   // Start raw telemetry stream
   telemetryStream = new TelemetryStream(wsClient);

@@ -13,7 +13,7 @@ export default function DebugApp() {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Show PAIN boot screen for 3 seconds
+    // Show GREMLIN boot screen for 3 seconds
     const bootTimer = setTimeout(() => {
       setBooting(false);
     }, 3000);

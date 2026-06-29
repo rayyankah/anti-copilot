@@ -55,25 +55,25 @@ html, body {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* ─── PAIN Text ─── */
-#pain-text {
-  font-size: 72px;
+/* ─── GREMLIN Text ─── */
+#gremlin-text {
+  font-size: 46px;
   color: #ff2d2d;
-  letter-spacing: 24px;
+  letter-spacing: 12px;
   text-shadow:
     0 0 20px rgba(255, 45, 45, 0.6),
     0 0 60px rgba(255, 45, 45, 0.3),
     0 0 120px rgba(255, 45, 45, 0.15);
   animation:
     glitch-text 3s ease-in-out infinite 1.5s,
-    pain-pulse 2s ease-in-out infinite 1.5s;
+    gremlin-pulse 2s ease-in-out infinite 1.5s;
   position: relative;
 }
 
 /* Glitch effect — offset copies */
-#pain-text::before,
-#pain-text::after {
-  content: 'PAIN';
+#gremlin-text::before,
+#gremlin-text::after {
+  content: 'GREMLIN';
   position: absolute;
   top: 0;
   left: 0;
@@ -81,14 +81,14 @@ html, body {
   height: 100%;
 }
 
-#pain-text::before {
+#gremlin-text::before {
   color: #0ff;
   animation: glitch-shift-1 3s ease-in-out infinite 1.5s;
   clip-path: inset(0 0 65% 0);
   opacity: 0.7;
 }
 
-#pain-text::after {
+#gremlin-text::after {
   color: #f0f;
   animation: glitch-shift-2 3s ease-in-out infinite 1.5s;
   clip-path: inset(65% 0 0 0);
@@ -117,7 +117,7 @@ html, body {
   96% { transform: translate(0); }
 }
 
-@keyframes pain-pulse {
+@keyframes gremlin-pulse {
   0%, 100% {
     text-shadow:
       0 0 20px rgba(255, 45, 45, 0.6),
@@ -133,7 +133,7 @@ html, body {
 }
 
 /* ─── Subtitle ─── */
-#pain-subtitle {
+#gremlin-subtitle {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.3);
   letter-spacing: 12px;

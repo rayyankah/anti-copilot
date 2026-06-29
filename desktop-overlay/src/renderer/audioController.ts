@@ -3,7 +3,7 @@
  * High-Emotion Speech Engine for Anti-Copilot "The Prodigy"
  */
 
-export type EmotionTone = 'threatened' | 'exhausted' | 'mocking' | 'default';
+export type EmotionTone = 'threatened' | 'exhausted' | 'mocking' | 'default' | 'sad';
 
 // The Prodigy (Kid Persona)
 const PRODIGY_VOICE_FRAGMENTS = [

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { speakWithEmotion, silenceAll, type EmotionTone } from './audioController';
+import { fetchMemeGif } from './giphy';
 import './styles/global.css';
 
 interface ChatMessage {
@@ -23,6 +24,7 @@ interface TriggerPayload {
 
 interface RobotState {
   behavioralState: string;
+  gremlinState: string;
   personality: {
     mood: number;
     curiosity: number;
@@ -47,6 +49,7 @@ declare global {
       onAgentAction: (callback: (action: any) => void) => void;
       onDebug: (callback: (log: any) => void) => void;
       sendUserReaction: (reaction: string) => void;
+      quitApp: () => void;
     };
   }
 }
@@ -83,11 +86,15 @@ const FIGHTBACK_BUTTONS: { reaction: string; label: string }[] = [
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uiState, setUiState] = useState<string>('idle');
+  const uiStateRef = useRef('idle'); // For the cursor listener
+  const [clickedReaction, setClickedReaction] = useState<string | null>(null);
   const [currentAction, setCurrentAction] = useState<any>(null);
   const [videoUrl, setVideoUrl] = useState('');
+  const [memeUrl, setMemeUrl] = useState<string | null>(null);
   const [isExiting, setIsExiting] = useState(false);
   const [robotState, setRobotState] = useState<RobotState>({
     behavioralState: 'normal',
+    gremlinState: 'idle',
     personality: { mood: 0.4, curiosity: 0.5, boredom: 0.2, confidence: 0.8, attachment: 0.2, energy: 0.8, chaos: 0.5, annoyance: 0.3 },
     avatarEmotion: 'neutral',
     isIdle: true,
@@ -104,9 +111,30 @@ export default function App() {
   useEffect(() => {
     if (window.antiCopilot?.onCursorUpdate) {
       window.antiCopilot.onCursorUpdate((_event: any, { x, y }: { x: number, y: number }) => {
-        if (pinnedRef.current) return; // frozen so the user can click the buttons
+        // Freeze the bubble in place the moment it becomes visible.
+        // It will only follow the cursor while hidden/idle.
+        if (uiStateRef.current !== 'idle') return;
+        
         if (chatboxRef.current) {
-          chatboxRef.current.style.transform = `translate3d(${x + 15}px, ${y + 15}px, 0)`;
+          const rect = chatboxRef.current.getBoundingClientRect();
+          // Fallback sizes if currently hidden/display:none
+          const w = rect.width || 350;
+          const h = rect.height || 200;
+          
+          let targetX = x + 15;
+          let targetY = y + 15;
+          
+          if (targetX + w > window.innerWidth - 20) {
+            targetX = window.innerWidth - w - 20;
+          }
+          if (targetY + h > window.innerHeight - 20) {
+            targetY = window.innerHeight - h - 20;
+          }
+          // Prevent negative values if screen is small
+          targetX = Math.max(20, targetX);
+          targetY = Math.max(20, targetY);
+
+          chatboxRef.current.style.transform = `translate3d(${targetX}px, ${targetY}px, 0)`;
         }
       });
     }
@@ -144,14 +172,17 @@ export default function App() {
     setIsExiting(true);
     pinnedRef.current = false;
     setIsPinned(false);
-    setTimeout(() => {
+    window.antiCopilot?.setClickThrough(true); // Failsafe unlock
+    const exitTimer = setTimeout(() => {
       setUiState('idle');
+      uiStateRef.current = 'idle';
       setMessages([]);
       setVideoUrl('');
       setIsExiting(false);
       // Don't call silenceAll() here — let speech finish naturally.
       // It gets cancelled by the next trigger's clearAllTimers()+silenceAll().
     }, 400);
+    staggerTimersRef.current.push(exitTimer);
   }, []);
 
   const scheduleHide = useCallback((durationMs: number) => {
@@ -159,9 +190,10 @@ export default function App() {
   }, [beginExit]);
 
   // Estimate how long speech will take (fallback safety net only).
+  // Generous margin to avoid cutting off mid-sentence.
   const estimateSpeechMs = (text: string): number => {
     const words = (text || '').split(/\s+/).filter(Boolean).length;
-    return Math.max(8000, Math.ceil((words / 2.5) * 1000) + 3000);
+    return Math.max(10000, Math.ceil((words / 2.0) * 1000) + 6000);
   };
 
   // ─── Main trigger listener ───
@@ -178,25 +210,37 @@ export default function App() {
       setIsExiting(false);
       setMessages([]);
       setVideoUrl('');
+      setMemeUrl(null);
       setCurrentAction(trigger);
       setUiState(action);
+      uiStateRef.current = action;
+      setClickedReaction(null);
 
       // Pinned bubbles stop following the cursor — so fight-back buttons are
       // clickable, and panels don't chase the mouse around the screen.
-      const shouldPin = ['speak_roast', 'mock', 'demotivate', 'fake_rewrite'].includes(action);
+      const shouldPin = ['speak_roast', 'mock', 'demotivate', 'fake_rewrite', 'send_meme'].includes(action);
       pinnedRef.current = shouldPin;
       setIsPinned(shouldPin);
       if (shouldPin && chatboxRef.current) {
-        chatboxRef.current.style.transform = ''; // let the CSS .pinned anchor take over
+        // We now freeze position for ALL visible states (see cursor tracker),
+        // but for "pinned" states we also allow pointer-events on the bubble.
+        // We keep the transform as-is so it stays exactly where it spawned.
       }
 
       const speakAndRender = (
-        fullText: string,
+        rawText: string | undefined,
         sender: string,
         tone?: EmotionTone,
         append: boolean = false,
         onDone?: () => void,
       ) => {
+        const fullText = (rawText || '').trim();
+        // Nothing to say (brain returned no line) — don't render an empty bubble.
+        if (!fullText) {
+          if (onDone) setTimeout(onDone, 200);
+          return;
+        }
+
         const utterance = speakWithEmotion(fullText);
 
         // Fire onDone exactly once — whichever happens first: speech ends, or
@@ -250,7 +294,7 @@ export default function App() {
             return newMsgs;
           });
           // Let the last words linger on screen, THEN dismiss — never mid-sentence.
-          setTimeout(fireDone, 1500);
+          setTimeout(fireDone, 4500);
         };
       };
 
@@ -258,109 +302,125 @@ export default function App() {
         case 'mock':
         case 'demotivate': {
           const tone: EmotionTone = (payload?.wpm && payload.wpm > 100) ? 'threatened' : 'mocking';
-          speakAndRender(content || '', 'Anti-Copilot', tone, false, beginExit);
+          speakAndRender(content, 'Anti-Copilot', tone, false, beginExit);
           break;
         }
 
         case 'gossip': {
-          const chatSequence: ChatMessage[] = [
-            { text: 'Hey look, he did it again...', sender: GOSSIP_CAST[0].name, tone: 'mocking' },
-            { text: 'Unbelievable. Zero structural awareness.', sender: GOSSIP_CAST[1].name, tone: 'mocking' },
-            { text: content || "I can't even watch anymore.", sender: GOSSIP_CAST[2].name, tone: 'exhausted' },
-          ];
-          chatSequence.forEach((msg, index) => {
-            const timer = setTimeout(() => {
-              speakAndRender(msg.text, msg.sender, msg.tone, true);
-            }, index * 2000);
-            staggerTimersRef.current.push(timer);
-          });
-          scheduleHide(chatSequence.length * 2000 + 5000);
+          // The brain provides the line; styled as a third-party voice mocking them.
+          speakAndRender(content, GOSSIP_CAST[2].name, 'mocking', false, beginExit);
           break;
         }
 
         case 'play_video': {
           const videoId = payload?.videoId || 'dQw4w9WgXcQ';
           setVideoUrl(`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0`);
-          speakWithEmotion("Watch this. Maybe you'll learn something.");
+          speakAndRender(content, 'GREMLIN', 'mocking');
           scheduleHide(15000);
           break;
         }
 
-        case 'block_window': {
-          speakWithEmotion('Step away from the editor.');
-          scheduleHide(8000);
+        case 'send_meme': {
+          // Alternate way to mock: throw a Giphy meme at them instead of just text.
+          fetchMemeGif(content).then((url) => setMemeUrl(url));
+          speakAndRender(content, 'Anti-Copilot', 'mocking');
+          scheduleHide(estimateSpeechMs(content || '') + 2000);
           break;
         }
 
-        case 'send_meme': {
-          speakAndRender(content || 'This is you right now.', 'Anti-Copilot', 'mocking', false, beginExit);
+        case 'block_screen': {
+          // Block the whole screen for a few seconds, then release it.
+          speakAndRender(content, 'GREMLIN', 'mocking');
+          window.antiCopilot.setClickThrough(false);
+          const blockMs = 5000;
+          const releaseTimer = setTimeout(() => window.antiCopilot.setClickThrough(true), blockMs);
+          staggerTimersRef.current.push(releaseTimer);
+          scheduleHide(blockMs);
           break;
         }
 
         case 'force_light_mode':
         case 'flash_light_mode': {
-          speakAndRender(content || 'Enjoy the sunlight.', 'The Prodigy', 'mocking', false, beginExit);
+          speakAndRender(content, 'GREMLIN', 'mocking', false, beginExit);
           break;
         }
 
         case 'speak_roast': {
-          speakAndRender(content || '', 'The Prodigy', 'mocking', false, beginExit);
+          speakAndRender(content, 'GREMLIN', 'mocking', false, beginExit);
           break;
         }
 
         case 'fake_rewrite': {
-          // Harmless sabotage simulation: "I'm rewriting your code..." → "jk, you wrote that."
-          speakAndRender(content || 'Hold on. Let me just fix all of this for you...', 'GREMLIN', 'mocking', false, beginExit);
-          break;
-        }
-
-        case 'trigger_tantrum': {
-          speakAndRender(content || "I'M BORED! THIS CODE IS TRASH!", 'The Prodigy', 'mocking', false);
-          scheduleHide(3000);
+          // Harmless sabotage simulation: fake "rewriting your code" → punchline reveal.
+          speakAndRender(content, 'GREMLIN', 'mocking', false, beginExit);
           break;
         }
 
         case 'flash_theme_strobe': {
-          speakAndRender(content || "WEEE WOOO STOP CODING!", 'The Prodigy', 'mocking', false);
+          speakAndRender(content, 'GREMLIN', 'mocking');
           scheduleHide(4000);
           break;
         }
 
         case 'trigger_peekaboo': {
-          speakAndRender(content || "Let me see!", 'The Prodigy', 'mocking', false);
+          speakAndRender(content, 'GREMLIN', 'mocking');
           scheduleHide(4000);
           break;
         }
 
         case 'play_brainrot': {
           setVideoUrl('https://www.youtube.com/embed/n_Dv4JMiwK8?autoplay=1&controls=0&mute=1');
-          speakAndRender(content || "Here's Subway Surfers.", 'The Prodigy', 'mocking', false);
+          speakAndRender(content, 'GREMLIN', 'mocking');
           scheduleHide(15000);
           break;
         }
 
         case 'parental_override': {
-          speakAndRender(content || "Timmy! Get off that computer!", 'Mom', 'exhausted', false);
-          setTimeout(() => {
-            speakWithEmotion("Hold on Mom!", false);
-          }, 4500);
+          speakAndRender(content, 'Mom', 'exhausted');
           scheduleHide(10000);
           break;
         }
 
         case 'critique_code_semantics': {
-          speakAndRender(content || '', 'Code Review', 'mocking', false);
+          speakAndRender(content, 'Code Review', 'mocking');
           scheduleHide(10000);
           break;
         }
 
         case 'block_code_view': {
-          speakAndRender(content || "Access Denied.", 'The Prodigy', 'mocking', false);
+          speakAndRender(content, 'GREMLIN', 'mocking');
           // @ts-ignore
           const duration = trigger.durationSeconds ? trigger.durationSeconds * 1000 : 8000;
           window.antiCopilot.setClickThrough(false);
           setTimeout(() => window.antiCopilot.setClickThrough(true), duration);
           scheduleHide(duration);
+          break;
+        }
+
+        case 'fake_panic': {
+          speakAndRender(content, 'GREMLIN', 'mocking');
+          window.antiCopilot.setClickThrough(false); // Make it truly block
+          setTimeout(() => window.antiCopilot.setClickThrough(true), 10000);
+          scheduleHide(10000);
+          break;
+        }
+
+        case 'fake_loading':
+        case 'editor_distraction': {
+          speakAndRender(content, 'GREMLIN', 'mocking');
+          scheduleHide(10000);
+          break;
+        }
+
+        case 'sad_reaction': {
+          speakAndRender(content, 'GREMLIN', 'sad', false, beginExit);
+          break;
+        }
+
+        case 'theme_sabotage':
+        case 'font_attack':
+        case 'cursor_attack': {
+          speakAndRender(content, 'GREMLIN', 'mocking', false, beginExit);
           break;
         }
 
@@ -379,32 +439,41 @@ export default function App() {
 
   // ─── Robot status text ───
   const getRobotStatusText = () => {
-    const { behavioralState, personality } = robotState;
-    if (behavioralState === 'triumphant') return 'ERROR: USER SUCCEEDED :(';
-    if (behavioralState === 'frustrated') return 'MOOD: DELIGHTED >:)';
-    if (behavioralState === 'manic') return 'CHAOS DETECTED. FEEDING.';
+    const { gremlinState, behavioralState, personality } = robotState;
+    if (gremlinState === 'defeated') return 'ERROR: USER SUCCEEDED :(';
+    if (gremlinState === 'attacking') return 'CHAOS DETECTED. STRIKING.';
+    if (gremlinState === 'teasing') return 'MOOD: DELIGHTED >:)';
+    if (gremlinState === 'plotting') return 'STATUS: PLOTTING...';
+    if (gremlinState === 'bored') return 'STATUS: SO BORED...';
+    if (gremlinState === 'curious') return 'STATUS: CURIOUS...';
     if (behavioralState === 'stagnant') return 'STATUS: ABANDONED?';
     if (behavioralState === 'clueless') return 'ALERT: CTRL+V GREMLIN';
-    if (behavioralState === 'arrogant') return 'THREAT: COMPETENCE';
-    if (personality.boredom > 0.7) return 'STATUS: BORED. PLOTTING.';
-    if (personality.chaos > 0.8) return 'STATUS: SCHEMING...';
-    return 'C:\\WATCHING..._';
+    return 'C:\\MONITORING..._';
   };
 
   // ─── Fight-back: send the user's reaction, then dismiss the bubble ───
   const reactTo = useCallback((reaction: string) => {
+    if (clickedReaction) return; // Prevent double clicks
+    
+    setClickedReaction(reaction);
     window.antiCopilot?.sendUserReaction(reaction);
     window.antiCopilot?.setClickThrough(true);
     clearAllTimers();
-    setIsExiting(true);
-    pinnedRef.current = false;
-    setIsPinned(false);
+    
+    // Wait 1.5s so the user can see their click register before it vanishes
     setTimeout(() => {
-      setUiState('idle');
-      setMessages([]);
-      setIsExiting(false);
-    }, 300);
-  }, [clearAllTimers]);
+      setIsExiting(true);
+      pinnedRef.current = false;
+      setIsPinned(false);
+      setTimeout(() => {
+        setUiState('idle');
+        uiStateRef.current = 'idle';
+        setMessages([]);
+        setIsExiting(false);
+        setClickedReaction(null);
+      }, 300);
+    }, 1500);
+  }, [clearAllTimers, clickedReaction]);
 
   // Make a region clickable in the click-through overlay while hovered
   const hoverGrab = {
@@ -412,15 +481,35 @@ export default function App() {
     onMouseLeave: () => window.antiCopilot?.setClickThrough(true),
   };
 
-  const FightBackBar = () => (
-    <div className="fightback-bar" {...hoverGrab}>
-      {FIGHTBACK_BUTTONS.map((b) => (
-        <button key={b.reaction} className="fightback-btn" onClick={() => reactTo(b.reaction)}>
-          {b.label}
-        </button>
-      ))}
-    </div>
-  );
+  const fightbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const FightBackBar = () => {
+    // Auto-dismiss after 12s if the user doesn't click
+    useEffect(() => {
+      fightbackTimerRef.current = setTimeout(() => {
+        // Silence is consent — the gremlin does what it wants
+        reactTo('destroy');
+      }, 12000);
+      return () => {
+        if (fightbackTimerRef.current) clearTimeout(fightbackTimerRef.current);
+      };
+    }, []);
+
+    return (
+      <div className="fightback-bar" {...hoverGrab}>
+        {FIGHTBACK_BUTTONS.map((b) => (
+          <button 
+            key={b.reaction} 
+            className={`fightback-btn ${clickedReaction === b.reaction ? 'clicked' : ''}`} 
+            onClick={() => reactTo(b.reaction)}
+            style={clickedReaction && clickedReaction !== b.reaction ? { opacity: 0.3, pointerEvents: 'none' } : {}}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   const robotFace = ROBOT_FACES[robotState.avatarEmotion] || ROBOT_FACES.neutral;
   const canvasClassName = `fullscreen-canvas state-${uiState}${isExiting ? ' exiting' : ''}`;
@@ -429,13 +518,13 @@ export default function App() {
     <div className={canvasClassName}>
 
       {/* ═══ ALWAYS-VISIBLE RETRO ROBOT WIDGET ═══ */}
-      <div className={`retro-robot-widget robot-state-${robotState.behavioralState}`}>
+      <div className={`retro-robot-widget robot-state-${robotState.gremlinState}`}>
         <div className="robot-titlebar">
           <span className="robot-titlebar-text">ANTI-COPILOT.EXE</span>
           <span className="robot-titlebar-buttons">
             <span className="tb-btn">_</span>
             <span className="tb-btn">□</span>
-            <span className="tb-btn">×</span>
+            <span className="tb-btn" style={{ pointerEvents: 'auto', cursor: 'pointer' }} onClick={() => window.antiCopilot?.quitApp?.()}>×</span>
           </span>
         </div>
         <div className="robot-body">
@@ -445,13 +534,13 @@ export default function App() {
           </div>
           <div className="robot-status-bar">
             <span className="robot-status-text">{getRobotStatusText()}</span>
-            <span className="robot-status-indicator" data-state={robotState.behavioralState} />
+            <span className="robot-status-indicator" data-state={robotState.gremlinState} />
           </div>
         </div>
       </div>
 
       {/* ═══ FLOATING UI (action overlays attached to cursor) ═══ */}
-      {uiState !== 'block_window' && (
+      {!['block_window', 'block_screen'].includes(uiState) && (
         <div ref={chatboxRef} className={`floating-ui-container${isPinned ? ' pinned' : ''}`}>
 
           {/* ─── Idle: no floating element ─── */}
@@ -474,7 +563,7 @@ export default function App() {
           )}
 
           {/* ─── Chat Bubbles ─── */}
-          {['mock', 'demotivate', 'gossip', 'force_light_mode', 'flash_light_mode'].includes(uiState) && (
+          {['mock', 'demotivate', 'gossip', 'force_light_mode', 'flash_light_mode', 'theme_sabotage', 'font_attack', 'cursor_attack', 'sad_reaction'].includes(uiState) && messages.length > 0 && (
             <div className="chatbox-container">
               <div className="chatbox-header">
                 <span className="chatbox-icon">🤖</span>
@@ -500,15 +589,19 @@ export default function App() {
             </div>
           )}
 
-          {/* ─── Meme Card ─── */}
+          {/* ─── Meme Card (Giphy) ─── */}
           {uiState === 'send_meme' && (
             <div className="chatbox-container">
               <div className="chatbox-header">
                 <span className="chatbox-icon">🤖</span>
-                <span className="chatbox-title">SHAME.BMP</span>
+                <span className="chatbox-title">SHAME.GIF</span>
               </div>
               <div className="meme-card">
-                <img src="https://i.imgflip.com/1g8my4.jpg" alt="Meme" className="meme-image" />
+                {memeUrl ? (
+                  <img src={memeUrl} alt="meme" className="meme-image" />
+                ) : (
+                  <div className="meme-loading">LOADING SHAME...</div>
+                )}
                 {messages[0] && <p className="meme-caption">{messages[0].text}</p>}
               </div>
             </div>
@@ -527,17 +620,57 @@ export default function App() {
             </div>
           )}
 
-          {/* ─── Roast / Tantrum / Strobe / Block chat bubbles ─── */}
-          {['speak_roast', 'trigger_tantrum', 'flash_theme_strobe', 'block_code_view'].includes(uiState) && (
+          {/* ─── Roast / Strobe / Block chat bubbles ─── */}
+          {['speak_roast', 'flash_theme_strobe', 'block_code_view'].includes(uiState) && messages[0] && (
             <div className="chatbox-container">
               <div className="chatbox-header prodigy-header">
                 <span className="chatbox-icon">🤖</span>
                 <span className="chatbox-title">{'C:\\GREMLIN.EXE'}</span>
               </div>
               <div className="chat-bubble sender-prodigy">
-                {messages[0] && <p className="bubble-text">{messages[0].text}</p>}
+                <p className="bubble-text">{messages[0].text}</p>
               </div>
               {uiState === 'speak_roast' && <FightBackBar />}
+            </div>
+          )}
+
+          {/* ─── Fake IDE Panic ─── */}
+          {uiState === 'fake_panic' && (
+            <div className="brutal-blocker" style={{ backgroundColor: '#aa0000', color: '#fff', textAlign: 'center' }}>
+              <h1 style={{ fontSize: '4em', margin: '20px' }}>VS CODE CRITICAL ERROR</h1>
+              <h2 style={{ fontSize: '2em' }}>Reason: Developer confidence too high</h2>
+              <div className="chat-bubble sender-prodigy" style={{ marginTop: '50px' }}>
+                <p className="bubble-text">{messages[0]?.text || 'I had to intervene.'}</p>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Fake Loading ─── */}
+          {uiState === 'fake_loading' && (
+            <div className="critique-dashboard" style={{ width: '400px' }}>
+              <div className="critique-header">
+                <span className="critique-icon">⌛</span> ANALYZING CODE QUALITY...
+              </div>
+              <div className="fake-rewrite-progress" style={{ textAlign: 'left', margin: '20px' }}>
+                <div>&gt; Scanning AST... 12%</div>
+                <div>&gt; Detecting code smells... 48%</div>
+                <div>&gt; Calculating technical debt... 99%</div>
+                <div style={{ color: 'red', marginTop: '10px' }}>&gt; FAILED.</div>
+              </div>
+              {messages[0] && <div className="critique-roast-text">{messages[0].text}</div>}
+            </div>
+          )}
+
+          {/* ─── Editor Distraction (Code Smell) ─── */}
+          {uiState === 'editor_distraction' && (
+            <div className="critique-dashboard" style={{ width: '400px', borderColor: 'orange' }}>
+              <div className="critique-header" style={{ backgroundColor: 'orange', color: '#000' }}>
+                <span className="critique-icon">☣️</span> ANTI-COPILOT REPORT
+              </div>
+              <div style={{ padding: '20px', fontSize: '1.5em', textAlign: 'center' }}>
+                Your code smell level: <strong>87%</strong>
+              </div>
+              {messages[0] && <div className="critique-roast-text" style={{ borderTop: '1px solid orange' }}>{messages[0].text}</div>}
             </div>
           )}
 
@@ -626,6 +759,24 @@ export default function App() {
             </p>
             <div className="blocker-timer-bar">
               <div className="blocker-timer-fill" />
+            </div>
+          </div>
+          <div className="blocker-scanlines" />
+        </div>
+      )}
+
+      {/* ─── Timed Screen Block ─── */}
+      {uiState === 'block_screen' && (
+        <div className="brutal-blocker" onMouseEnter={() => window.antiCopilot?.setClickThrough(false)}>
+          <div className="blocker-content">
+            <div className="blocker-icon-ring">
+              <span className="blocker-icon">⛔</span>
+            </div>
+            <h1 className="blocker-title">SCREEN LOCKED</h1>
+            <div className="blocker-divider" />
+            <p className="blocker-message">{messages[0]?.text || 'Take a break. I insist.'}</p>
+            <div className="blocker-timer-bar">
+              <div className="blocker-timer-fill" style={{ animationDuration: '5s' }} />
             </div>
           </div>
           <div className="blocker-scanlines" />

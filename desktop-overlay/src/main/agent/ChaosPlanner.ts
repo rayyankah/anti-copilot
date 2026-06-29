@@ -16,11 +16,97 @@ export interface ChaosOpportunity {
   trigger: string;      // why it wants to act
   shouldStrike: boolean;
   forceBrain: boolean;  // some moments (success!) MUST get a real LLM reaction
+  assignedAction: string; // The action we've chosen for the LLM to write dialogue for
 }
 
-const STRIKE_THRESHOLD = 55;
+const STRIKE_THRESHOLD = 38;
+
+// ─── Weighted Action Pools ───
+// Each trigger has a pool of actions the gremlin can pick from.
+// Higher weight = more likely. This prevents "same trigger → same attack" every time.
+interface WeightedAction {
+  action: string;
+  weight: number;
+  minChaos?: number; // Only available if personality chaos >= this threshold
+}
+
+const ACTION_POOLS: Record<string, WeightedAction[]> = {
+  success: [
+    { action: 'sad_reaction', weight: 5 },
+    { action: 'gossip', weight: 2 },
+    { action: 'demotivate', weight: 1 },
+  ],
+  // Memes are an INTERRUPTION, not a default reply — they only appear rarely,
+  // mostly when the user is idle. Mocking with the actual code is the bread & butter.
+  frustration: [
+    { action: 'speak_roast', weight: 5 },
+    { action: 'mock', weight: 4 },
+    { action: 'cursor_attack', weight: 1 },
+    { action: 'fake_panic', weight: 1, minChaos: 0.6 },
+    { action: 'theme_sabotage', weight: 1, minChaos: 0.5 },
+    { action: 'block_screen', weight: 1, minChaos: 0.8 },
+  ],
+  manic_typing: [
+    { action: 'speak_roast', weight: 5 },
+    { action: 'mock', weight: 4 },
+    { action: 'editor_distraction', weight: 1 },
+    { action: 'font_attack', weight: 1, minChaos: 0.7 },
+    { action: 'cursor_attack', weight: 1 },
+  ],
+  copy_paste: [
+    { action: 'mock', weight: 5 },
+    { action: 'speak_roast', weight: 4 },
+    { action: 'critique_code_semantics', weight: 2 },
+    { action: 'gossip', weight: 2 },
+  ],
+  arrogance: [
+    { action: 'mock', weight: 4 },
+    { action: 'speak_roast', weight: 4 },
+    { action: 'theme_sabotage', weight: 2 },
+    { action: 'cursor_attack', weight: 1 },
+    { action: 'fake_loading', weight: 1, minChaos: 0.5 },
+    { action: 'block_screen', weight: 1, minChaos: 0.75 },
+  ],
+  silence: [
+    { action: 'speak_roast', weight: 4 },
+    { action: 'trigger_peekaboo', weight: 2 },
+    { action: 'send_meme', weight: 2 },        // interrupt the idle dev with a meme
+    { action: 'fake_loading', weight: 1, minChaos: 0.6 },
+    { action: 'play_brainrot', weight: 1, minChaos: 0.8 },
+    { action: 'block_screen', weight: 1, minChaos: 0.7 },
+  ],
+  new_errors: [
+    { action: 'mock', weight: 5 },
+    { action: 'speak_roast', weight: 4 },
+    { action: 'critique_code_semantics', weight: 3 },
+    { action: 'gossip', weight: 1 },
+  ],
+  restlessness: [
+    { action: 'mock', weight: 5 },
+    { action: 'speak_roast', weight: 5 },
+    { action: 'gossip', weight: 1 },
+    { action: 'send_meme', weight: 1 },        // rare interrupt only
+    { action: 'trigger_peekaboo', weight: 1 },
+  ],
+};
+
+function pickWeightedAction(pool: WeightedAction[], chaos: number): string {
+  // Filter by chaos threshold
+  const available = pool.filter(a => !a.minChaos || chaos >= a.minChaos);
+  if (available.length === 0) return 'speak_roast'; // fallback
+
+  const totalWeight = available.reduce((sum, a) => sum + a.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const entry of available) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.action;
+  }
+  return available[available.length - 1].action;
+}
 
 export class ChaosPlanner {
+  private lastAssignedAction = '';
+
   /**
    * Score the current moment. Higher = funnier opportunity to disrupt.
    */
@@ -50,7 +136,6 @@ export class ChaosPlanner {
 
     switch (state) {
       case BehavioralState.Triumphant:
-        // The user SUCCEEDED. This is rare and must always get a real reaction.
         consider(70, 'success', true);
         break;
       case BehavioralState.Frustrated:
@@ -82,11 +167,22 @@ export class ChaosPlanner {
       }
     }
 
+    // ─── Action Delegation (Weighted Random) ───
+    const pool = ACTION_POOLS[trigger] || ACTION_POOLS.restlessness;
+    let assignedAction = pickWeightedAction(pool, p.chaos);
+
+    // Anti-repeat: if we just picked the same action as last time, re-roll once
+    if (assignedAction === this.lastAssignedAction && pool.length > 1) {
+      assignedAction = pickWeightedAction(pool, p.chaos);
+    }
+    this.lastAssignedAction = assignedAction;
+
     return {
       score: Math.round(score),
       trigger,
       shouldStrike: score >= STRIKE_THRESHOLD,
       forceBrain,
+      assignedAction,
     };
   }
 }
