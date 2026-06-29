@@ -11,6 +11,11 @@ export class ActionManager {
   private cooldowns: Map<string, CooldownConfig> = new Map();
   private chaosLevel: number = 0; // The escalating intensity of the gremlin
 
+  // Rolling-window rate cap for memes: at most MEME_MAX in any MEME_WINDOW_MS.
+  private memeTimestamps: number[] = [];
+  private readonly MEME_WINDOW_MS = 600_000; // 10 minutes
+  private readonly MEME_MAX = 6;
+
   constructor(private memorySystem: MemorySystem) {
     this.initCooldowns();
   }
@@ -26,10 +31,10 @@ export class ActionManager {
     this.cooldowns.set(ActionType.PlayBrainrot, { lastUsed: 0, cooldownMs: 240_000 });
     this.cooldowns.set(ActionType.FlashThemeStrobe, { lastUsed: 0, cooldownMs: 120_000 });
     this.cooldowns.set(ActionType.BlockCodeView, { lastUsed: 0, cooldownMs: 300_000 });
-    this.cooldowns.set(ActionType.Gossip, { lastUsed: 0, cooldownMs: 45_000 });
-    this.cooldowns.set(ActionType.SpeakRoast, { lastUsed: 0, cooldownMs: 8_000 });
-    this.cooldowns.set(ActionType.Mock, { lastUsed: 0, cooldownMs: 8_000 });
-    this.cooldowns.set(ActionType.SendMeme, { lastUsed: 0, cooldownMs: 150_000 });
+    this.cooldowns.set(ActionType.Gossip, { lastUsed: 0, cooldownMs: 20_000 });
+    this.cooldowns.set(ActionType.SpeakRoast, { lastUsed: 0, cooldownMs: 2_000 });
+    this.cooldowns.set(ActionType.Mock, { lastUsed: 0, cooldownMs: 2_000 });
+    this.cooldowns.set(ActionType.SendMeme, { lastUsed: 0, cooldownMs: 90_000 });
     this.cooldowns.set(ActionType.BlockScreen, { lastUsed: 0, cooldownMs: 300_000 });
   }
 
@@ -51,6 +56,11 @@ export class ActionManager {
       if (now - config.lastUsed < config.cooldownMs) {
         return false; // Rejected due to cooldown
       }
+    }
+
+    // Hard rolling-window cap for memes (max 6 per 10 minutes)
+    if (action === ActionType.SendMeme && !this.memeBudgetAvailable()) {
+      return false;
     }
 
     // ─── Escalation Logic ───
@@ -80,6 +90,16 @@ export class ActionManager {
     if (config) {
       config.lastUsed = Date.now();
     }
+    if (action === ActionType.SendMeme) {
+      this.memeTimestamps.push(Date.now());
+    }
+  }
+
+  /** True if we're still under the 6-memes-per-10-minutes budget. */
+  private memeBudgetAvailable(): boolean {
+    const cutoff = Date.now() - this.MEME_WINDOW_MS;
+    this.memeTimestamps = this.memeTimestamps.filter((t) => t > cutoff);
+    return this.memeTimestamps.length < this.MEME_MAX;
   }
 
   public getChaosLevel(): number {

@@ -36,11 +36,13 @@ const ACTION_POOLS: Record<string, WeightedAction[]> = {
     { action: 'gossip', weight: 2 },
     { action: 'demotivate', weight: 1 },
   ],
-  // Memes are an INTERRUPTION, not a default reply — they only appear rarely,
-  // mostly when the user is idle. Mocking with the actual code is the bread & butter.
+  // Memes show up across every mood now (weight ~2), but a hard rolling cap in
+  // ActionManager keeps them to at most 6 per 10 minutes so they stay a treat.
+  // Mocking the actual code is still the bread & butter.
   frustration: [
     { action: 'speak_roast', weight: 5 },
     { action: 'mock', weight: 4 },
+    { action: 'send_meme', weight: 2 },
     { action: 'cursor_attack', weight: 1 },
     { action: 'fake_panic', weight: 1, minChaos: 0.6 },
     { action: 'theme_sabotage', weight: 1, minChaos: 0.5 },
@@ -49,6 +51,7 @@ const ACTION_POOLS: Record<string, WeightedAction[]> = {
   manic_typing: [
     { action: 'speak_roast', weight: 5 },
     { action: 'mock', weight: 4 },
+    { action: 'send_meme', weight: 2 },
     { action: 'editor_distraction', weight: 1 },
     { action: 'font_attack', weight: 1, minChaos: 0.7 },
     { action: 'cursor_attack', weight: 1 },
@@ -56,12 +59,14 @@ const ACTION_POOLS: Record<string, WeightedAction[]> = {
   copy_paste: [
     { action: 'mock', weight: 5 },
     { action: 'speak_roast', weight: 4 },
+    { action: 'send_meme', weight: 2 },
     { action: 'critique_code_semantics', weight: 2 },
     { action: 'gossip', weight: 2 },
   ],
   arrogance: [
     { action: 'mock', weight: 4 },
     { action: 'speak_roast', weight: 4 },
+    { action: 'send_meme', weight: 2 },
     { action: 'theme_sabotage', weight: 2 },
     { action: 'cursor_attack', weight: 1 },
     { action: 'fake_loading', weight: 1, minChaos: 0.5 },
@@ -69,8 +74,8 @@ const ACTION_POOLS: Record<string, WeightedAction[]> = {
   ],
   silence: [
     { action: 'speak_roast', weight: 4 },
+    { action: 'send_meme', weight: 3 },        // interrupt the idle dev with a meme
     { action: 'trigger_peekaboo', weight: 2 },
-    { action: 'send_meme', weight: 2 },        // interrupt the idle dev with a meme
     { action: 'fake_loading', weight: 1, minChaos: 0.6 },
     { action: 'play_brainrot', weight: 1, minChaos: 0.8 },
     { action: 'block_screen', weight: 1, minChaos: 0.7 },
@@ -78,14 +83,15 @@ const ACTION_POOLS: Record<string, WeightedAction[]> = {
   new_errors: [
     { action: 'mock', weight: 5 },
     { action: 'speak_roast', weight: 4 },
+    { action: 'send_meme', weight: 2 },
     { action: 'critique_code_semantics', weight: 3 },
     { action: 'gossip', weight: 1 },
   ],
   restlessness: [
     { action: 'mock', weight: 5 },
     { action: 'speak_roast', weight: 5 },
+    { action: 'send_meme', weight: 2 },
     { action: 'gossip', weight: 1 },
-    { action: 'send_meme', weight: 1 },        // rare interrupt only
     { action: 'trigger_peekaboo', weight: 1 },
   ],
 };

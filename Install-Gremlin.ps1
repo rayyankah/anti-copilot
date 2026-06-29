@@ -188,8 +188,13 @@ if ($SkipLaunch) {
 Write-Info "Starting overlay (splash will show while it connects to the brain)..."
 Write-Info "Leave the new window open. Close it to stop the Gremlin."
 
+# Pass the URL via the process environment (NOT an inline `set ... &&`, which
+# would capture the trailing space before && and corrupt the URL). The child
+# cmd inherits this PowerShell process's environment.
+$env:ANTI_COPILOT_BRAIN_URL = $BackendUrl.Trim()
+
 Start-Process -FilePath "cmd.exe" `
-  -ArgumentList "/c", "set ANTI_COPILOT_BRAIN_URL=$BackendUrl && npm run dev" `
+  -ArgumentList "/c", "npm run dev" `
   -WorkingDirectory $OverlayDir
 
 Write-Ok "Gremlin is booting. Open VS Code and start coding - it is watching."
