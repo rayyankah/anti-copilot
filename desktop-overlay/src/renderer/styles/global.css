@@ -79,7 +79,9 @@ html, body, #root {
   position: absolute;
   top: 0;
   left: 0;
-  transition: transform 0.05s linear;
+  /* No transition: position is driven imperatively from the cursor stream, so
+     an easing here just makes it lag/rubber-band ("glitch") on every move. */
+  transition: none;
   will-change: transform;
   pointer-events: none;
 }

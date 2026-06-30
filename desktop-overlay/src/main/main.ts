@@ -2,7 +2,6 @@ import { app, BrowserWindow, screen, ipcMain } from 'electron';
 import path from 'path';
 import { execSync, spawn, ChildProcess } from 'child_process';
 import { WebSocketServer } from 'ws';
-import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as http from 'http';
@@ -10,15 +9,10 @@ import * as https from 'https';
 import { AgentRuntime } from './agent/AgentRuntime';
 import { TelemetryFrame } from '../shared/types';
 
-// ─── Load .env from project root ───
+// No .env / local config needed — the Gremlin brain is hosted in the cloud and
+// the overlay talks to it directly over HTTPS (see BACKEND_URL below). An
+// optional ANTI_COPILOT_BRAIN_URL env var can still override the target.
 const projectRoot = path.resolve(__dirname, '..', '..', '..');
-const envPath = path.join(projectRoot, '.env');
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-  console.log('[Launcher] Loaded .env from', envPath);
-} else {
-  console.warn('[Launcher] No .env found at', envPath);
-}
 
 // ─── Configuration ───
 const SPLASH_WIDTH = 500;
@@ -29,7 +23,9 @@ const EXTENSION_ID = 'anti-copilot.anti-copilot-sensor';
 
 // The Gremlin brain is hosted on Vercel. Override with ANTI_COPILOT_BRAIN_URL
 // (or run a local brain with ANTI_COPILOT_LOCAL_BRAIN=1, see BrainClient).
-const BACKEND_URL = (process.env.ANTI_COPILOT_BRAIN_URL || 'https://vercel-brain-zeta.vercel.app').replace(/\/$/, '');
+const BACKEND_URL = (process.env.ANTI_COPILOT_BRAIN_URL || 'https://vercel-brain-zeta.vercel.app')
+  .trim()              // guard against trailing whitespace from `set VAR=... &&`
+  .replace(/\/+$/, ''); // drop any trailing slash(es)
 
 // Gremlin-flavored lines shown on the splash while we wait for the backend.
 const CONNECTING_MESSAGES = [
@@ -174,6 +170,7 @@ function checkAndInstallExtension(): void {
 // STEP 4: Connect to the hosted Gremlin brain
 // ═══════════════════════════════════════════
 let connectMsgTimer: NodeJS.Timeout | null = null;
+let bootDeadlineTimer: NodeJS.Timeout | null = null;
 
 function cycleConnectingMessages(): void {
   let i = 0;
@@ -191,47 +188,67 @@ function stopConnectingMessages(): void {
   }
 }
 
+function markBrainReady(reason: string, level: string = 'success'): void {
+  if (brainReady) return;
+  stopConnectingMessages();
+  if (bootDeadlineTimer) { clearTimeout(bootDeadlineTimer); bootDeadlineTimer = null; }
+  log('launcher', level, reason);
+  updateSplashStatus(level === 'success' ? 'Gremlin connected ✓' : 'Booting...', level);
+  brainReady = true;
+  checkTransitionToOverlay();
+}
+
 function connectToBackend(attempts: number = 0): void {
   if (brainReady || hasTransitioned) return;
-  if (attempts === 0) cycleConnectingMessages();
 
-  // Give up gracefully after ~30s — boot anyway, the runtime keeps retrying.
-  if (attempts > 20) {
-    stopConnectingMessages();
-    log('launcher', 'warn', 'Backend did not respond in time — booting offline; the gremlin will keep trying.');
-    updateSplashStatus('Backend slow — booting anyway...', 'warn');
-    brainReady = true;
-    checkTransitionToOverlay();
-    return;
+  if (attempts === 0) {
+    cycleConnectingMessages();
+    // Hard wall-clock safety net: no matter what the network does, never let
+    // the splash hang. Boot offline after 15s; the runtime keeps retrying.
+    if (bootDeadlineTimer) clearTimeout(bootDeadlineTimer);
+    bootDeadlineTimer = setTimeout(() => {
+      markBrainReady('Backend slow/unreachable — booting offline; the gremlin will keep trying.', 'warn');
+    }, 15_000);
   }
 
   const transport = BACKEND_URL.startsWith('https') ? https : http;
   let reqFinished = false;
 
-  const req = transport.get(`${BACKEND_URL}/api/commentator`, (res) => {
+  // Build/validate the URL defensively so a bad BACKEND_URL can never crash
+  // the whole main process with an uncaught "Invalid URL".
+  let target: URL;
+  try {
+    target = new URL('/api/commentator', BACKEND_URL);
+  } catch {
+    markBrainReady(`Invalid backend URL: "${BACKEND_URL}". Booting offline.`, 'error');
+    return;
+  }
+
+  log('launcher', 'info', `Pinging brain (attempt ${attempts + 1}): ${target.href}`);
+
+  const req = transport.get(target, (res) => {
     if (reqFinished) return;
     reqFinished = true;
     res.resume();
     if (res.statusCode && res.statusCode < 500) {
-      stopConnectingMessages();
-      log('launcher', 'info', `Backend reachable (status ${res.statusCode}) at ${BACKEND_URL}`);
-      updateSplashStatus('Gremlin connected ✓', 'success');
-      brainReady = true;
-      checkTransitionToOverlay();
+      markBrainReady(`Backend reachable (status ${res.statusCode}) at ${BACKEND_URL}`);
     } else {
+      log('launcher', 'warn', `Brain returned status ${res.statusCode} — retrying`);
       retryConnect(attempts);
     }
   });
 
-  req.on('error', () => {
+  req.on('error', (err: Error & { code?: string }) => {
     if (reqFinished) return;
     reqFinished = true;
+    log('launcher', 'warn', `Brain ping error (${err.code || 'unknown'}): ${err.message} — retrying`);
     retryConnect(attempts);
   });
 
-  req.setTimeout(2500, () => {
+  req.setTimeout(3000, () => {
     if (reqFinished) return;
     reqFinished = true;
+    log('launcher', 'warn', 'Brain ping timed out (3s) — retrying');
     req.destroy();
     retryConnect(attempts);
   });
@@ -461,6 +478,16 @@ app.whenReady().then(async () => {
   log('launcher', 'info', '═══════════════════════════════════════');
 
   createSplashWindow();
+
+  // Fallback: if the splash's "I'm done animating" IPC never arrives, don't
+  // block the transition forever.
+  setTimeout(() => {
+    if (!splashAnimationDone) {
+      log('launcher', 'warn', 'Splash ready IPC not received — proceeding anyway');
+      splashAnimationDone = true;
+      checkTransitionToOverlay();
+    }
+  }, 6000);
 
   setTimeout(() => {
     killPort(WS_PORT); // clear any stale overlay socket

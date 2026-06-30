@@ -35,9 +35,11 @@ export class AgentRuntime {
   private isRunning = false;
   private loopInterval: NodeJS.Timeout | null = null;
   private readonly TICK_MS = 500;
-  private readonly MIN_BRAIN_INTERVAL = 8_000;        // Min gap on a state change
-  private readonly MIN_FORCE_BRAIN_INTERVAL = 5_000;  // Shorter gate for big moments (success!)
-  private readonly MIN_SPONTANEOUS_INTERVAL = 16_000; // Min gap for pure-boredom self-starts
+  private readonly MIN_BRAIN_INTERVAL = 10_000;       // Min gap on a state change
+  private readonly MIN_FORCE_BRAIN_INTERVAL = 8_000;  // Shorter gate for big moments (success!)
+  private readonly MIN_SPONTANEOUS_INTERVAL = 10_000; // Min gap for pure-boredom self-starts
+  private readonly FORCED_HECKLE_MS = 10_000;         // Heckle on a steady ~10s beat, ALWAYS
+  private heckleRetryCount = 0;                        // quick-retries when a line is suppressed
   private lastBrainCallTime = 0;
   private lastRobotStateUpdate = 0;
   private lastThoughtStreamLog = 0;
@@ -287,15 +289,20 @@ export class AgentRuntime {
       const opportunity = this.chaosPlanner.evaluate(behavioralState, personality, snapshot);
       const hasInflection = this.behaviorEngine.hasInflection();
 
-      if (!opportunity.shouldStrike && !hasInflection) return;
+      // Heckle on a hard ~5s cadence NO MATTER WHAT the developer is doing —
+      // not just when they pause. If 5s have passed since the last line, the
+      // gremlin pipes up regardless of how "juicy" the moment scored.
+      const sinceLast = now - this.lastBrainCallTime;
+      const dueForHeckle = sinceLast >= this.FORCED_HECKLE_MS;
 
-      // Pick the rate gate: big moments react fast, state changes medium, pure
-      // boredom self-starts slowest. EVERY reaction comes from the brain now —
-      // there are no canned local lines.
-      let gate = this.MIN_SPONTANEOUS_INTERVAL;
+      if (!opportunity.shouldStrike && !hasInflection && !dueForHeckle) return;
+
+      // Pick the rate gate: big moments react fastest, everything else heckles
+      // on the forced ~5s cadence. EVERY reaction comes from the brain.
+      let gate = this.FORCED_HECKLE_MS;
       if (opportunity.forceBrain) gate = this.MIN_FORCE_BRAIN_INTERVAL;
       else if (hasInflection) gate = this.MIN_BRAIN_INTERVAL;
-      if ((now - this.lastBrainCallTime) < gate) return;
+      if (sinceLast < gate) return;
 
       await this.strikeBrain(opportunity.trigger, opportunity.score);
     } catch (err) {
@@ -372,13 +379,18 @@ export class AgentRuntime {
   private applyDecision(decision: AgentDecision, priorState: BehavioralState): void {
     if (decision.action === 'stay_silent') {
       this.memorySystem.recordDecision(decision);
+      this.retryHeckleSoon();
       return;
     }
 
     if (this.isEmptyOrRepeat(decision)) {
       this.logFn('agent', 'warn', `Suppressed empty/repeat: ${decision.action} — "${(decision.content || '').slice(0, 50)}"`);
+      this.retryHeckleSoon();
       return;
     }
+
+    // A real line landed — reset the steady ~10s beat.
+    this.heckleRetryCount = 0;
 
     this.logFn('agent', 'info', `Acting: ${decision.action} — "${decision.content?.substring(0, 60)}"`);
 
@@ -411,6 +423,21 @@ export class AgentRuntime {
       });
       this.logFn('agent', 'info', `Outcome: ${outcome} (${priorState} → ${postState})`);
     }, 10_000);
+  }
+
+  /**
+   * When a beat is wasted (the brain stayed silent or produced a repeat), nudge
+   * the clock so the next attempt fires in ~2.5s instead of a full cadence
+   * later — keeping a real line landing on a steady ~10s beat. Bounded so a
+   * genuinely dead moment doesn't hammer the brain.
+   */
+  private retryHeckleSoon(): void {
+    if (this.heckleRetryCount >= 3) {
+      this.heckleRetryCount = 0;
+      return;
+    }
+    this.heckleRetryCount++;
+    this.lastBrainCallTime = Date.now() - (this.FORCED_HECKLE_MS - 2500);
   }
 
   /**

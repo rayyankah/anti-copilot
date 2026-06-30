@@ -426,6 +426,7 @@ export default function App() {
 
         default: {
           setUiState('idle');
+          uiStateRef.current = 'idle';
           break;
         }
       }

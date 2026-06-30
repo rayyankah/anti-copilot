@@ -243,7 +243,37 @@ Interaction #${memory?.sessionInteractionCount || 0}. Make it count.`;
         prompt: `State: ${behavioralState}. Mood: ${personalityState?.mood?.toFixed(2)}. Boredom: ${personalityState?.boredom?.toFixed(2)}. Chaos trigger: ${opportunity?.trigger ?? 'restlessness'}. Action: ${assignedAction}.${behavioralState === 'triumphant' ? ' THEY SUCCEEDED — react with sadness/devastation, do NOT congratulate.' : ''}${hasCodeContext ? ' Code is visible — reference it.' : ' No code visible — stay short and in-character.'} Choose your move. Banned phrases: [${forbiddenPhrases.map((p: string) => `"${p}"`).join(', ')}]`,
       });
 
-      return NextResponse.json({ ...decision, action: assignedAction });
+      const response = { ...decision, action: assignedAction };
+
+      // Persist EVERY generated response so there's a full transcript per user.
+      try {
+        const ts = Date.now();
+        await dynamoDb.send(
+          new PutCommand({
+            TableName: process.env.DYNAMODB_TABLE_NAME || 'anti-copilot-telemetry',
+            Item: {
+              pk: `USER#${userId}`,
+              sk: `RESPONSE#${ts}`,
+              username,
+              behavioralState,
+              trigger: opportunity?.trigger ?? 'restlessness',
+              action: assignedAction,
+              content: response.content ?? '',
+              avatarEmotion: response.avatarEmotion ?? 'neutral',
+              persona: response.persona ?? 'gremlin',
+              confidence: response.confidence ?? 0,
+              reasoning: response.reasoning ?? '',
+              filePath: codeContext?.filePath ?? '',
+              timestamp: ts,
+              createdAt: new Date().toISOString(),
+            },
+          })
+        );
+      } catch (saveErr) {
+        console.error('[Agent API] Response save error:', saveErr);
+      }
+
+      return NextResponse.json(response);
     } catch (aiErr) {
       console.error('[Agent API] AI SDK Error:', aiErr);
       return NextResponse.json({
